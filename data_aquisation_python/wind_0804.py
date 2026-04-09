@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
+print("done first time")
+
 # -------- CONFIG --------
 PORT = "COM5"
 BAUD = 921600
