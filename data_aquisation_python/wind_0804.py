@@ -4,10 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-print("done first time")
+print("done second time")
 
 # -------- CONFIG --------
-PORT = "COM5"
+PORT = "COM6"
 BAUD = 921600
 
 HEADER_SOUTHOUT = 0xAA55
@@ -67,6 +67,9 @@ axs[1].set_ylim(1950, 2250)
 # -------- Update Loop --------
 def update(frame):
     samples1, samples2 = read_frame()
+
+    samples1 = samples1 - np.mean(samples1)
+    samples2 = samples2 - np.mean(samples1)
 
     line1.set_ydata(samples1)
     line2.set_ydata(samples2)
