@@ -31,35 +31,40 @@ ser = serial.Serial(PORT, BAUD, timeout=1)
 
 # -------- Frame Reader --------
 def read_frame():
-    # --- SOUTHOUT ---
     while True:
+        # ---- FIND SOUTH ----
         data = ser.read(2)
         if len(data) < 2:
             continue
 
         value = data[0] | (data[1] << 8)
-        if value == HEADER_SOUTHOUT:
-            payload = ser.read(PAYLOAD_SAMPLES * 2)
-            if len(payload) != PAYLOAD_SAMPLES * 2:
-                continue
-            samples1 = struct.unpack('<' + 'H'*PAYLOAD_SAMPLES, payload)
-            break
 
-    # --- NORTHOUT ---
-    while True:
+        if value != HEADER_SOUTHOUT:
+            continue
+
+        payload1 = ser.read(PAYLOAD_SAMPLES * 2)
+        if len(payload1) != PAYLOAD_SAMPLES * 2:
+            continue
+
+        samples1 = struct.unpack('<' + 'H'*PAYLOAD_SAMPLES, payload1)
+
+        # ---- IMMEDIATELY EXPECT NORTH ----
         data = ser.read(2)
         if len(data) < 2:
             continue
 
         value = data[0] | (data[1] << 8)
-        if value == HEADER_NORTHOUT:
-            payload = ser.read(PAYLOAD_SAMPLES * 2)
-            if len(payload) != PAYLOAD_SAMPLES * 2:
-                continue
-            samples2 = struct.unpack('<' + 'H'*PAYLOAD_SAMPLES, payload)
-            break
 
-    return np.array(samples1), np.array(samples2)
+        if value != HEADER_NORTHOUT:
+            continue  # discard pair, resync
+
+        payload2 = ser.read(PAYLOAD_SAMPLES * 2)
+        if len(payload2) != PAYLOAD_SAMPLES * 2:
+            continue
+
+        samples2 = struct.unpack('<' + 'H'*PAYLOAD_SAMPLES, payload2)
+
+        return np.array(samples1), np.array(samples2)
 
 # -------- Plot Setup --------
 fig, axs = plt.subplots(4, 1, figsize=(8, 6), sharex=True)
