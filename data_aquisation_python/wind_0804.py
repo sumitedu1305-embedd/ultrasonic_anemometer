@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from scipy.signal import butter, filtfilt, correlate
+from collections import deque
+
+
 
 
 print("done second time")
@@ -21,6 +24,9 @@ FS = 1e6
 
 SENSOR_DISTANCE = 0.2   # meters
 SOUND_SPEED = 343 
+
+lag_buffer = deque(maxlen=15)
+wind_buffer = deque(maxlen=15)
 
 # ------------------------
 
@@ -113,7 +119,15 @@ def update(frame):
         lag = lag + frac
     dt = lag / FS
     wind_speed = (lag / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
-    print(f"lag: {lag:.3f} samples | dt: {dt*1e6:.2f} us | wind: {wind_speed:.2f} m/s",end = "              \r")
+    
+    lag_buffer.append(lag)
+    wind_buffer.append(wind_speed)
+    lag_med = np.median(lag_buffer)
+    wind_med = np.median(wind_buffer)
+    lag_smooth = np.mean([x for x in lag_buffer if abs(x - lag_med) < 2])
+    wind_smooth = np.mean([x for x in wind_buffer if abs(x - wind_med) < 2])
+
+    print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s")
 
     line1.set_ydata(samples1)
     line2.set_ydata(samples2)
