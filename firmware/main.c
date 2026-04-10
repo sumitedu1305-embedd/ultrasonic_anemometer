@@ -2,6 +2,8 @@
 
 uint16_t adc_buffer1[501] = {[0]=0xAA55};
 uint16_t adc_buffer2[501] = {[0]=0xBB55};
+uint16_t adc_buffer3[501] = {[0]=0xCC55};
+uint16_t adc_buffer4[501] = {[0]=0xDD55};
 uint32_t hello;
 uint32_t cnt = 0;
 
@@ -29,6 +31,9 @@ int main(void)
 		
 	while(1)
 	{
+		
+		  //----------------------------------------------- SOUTH OUT -----------------------------------------------------------------
+		
 		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,0);
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,0);
 		
@@ -48,7 +53,7 @@ int main(void)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
 		  
-		  //----------------------------------------------------------------------------------------------------------------
+		  //----------------------------------------------- NORTH OUT -----------------------------------------------------------------
 			  
 		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,0);
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,1);
@@ -69,7 +74,49 @@ int main(void)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
 			  
-		  //----------------------------------------------------------------------------------------------------------------
+		  //----------------------------------------------- WEST OUT -----------------------------------------------------------------
+			 
+		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,1);
+		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,0);
+		  
+		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
+        TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
+			
+		  DMA1_CCR1 &= ~(1<<0);
+		  while(DMA1_CCR1 & (1<<0)){}
+		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer3+1);      // memory = buffer
+		  DMA_IFCR(DMA1) = 0xF;
+		  DMA1_CNDTR1 = 500;
+		  DMA1_CCR1 |= 1<<0;
+		  ADC_CR(ADC1) |= 1<<2;
+        
+        TX_pulses(8);  // your pulse function
+        delay_ms(5);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
+			  
+        cnt = TIM_CNT(TIM3);  // should be ~1000
+			  
+		  //----------------------------------------------- EAST OUT -----------------------------------------------------------------
+		  
+		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,1);
+		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,1);
+		  
+		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
+        TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
+			
+		  DMA1_CCR1 &= ~(1<<0);
+		  while(DMA1_CCR1 & (1<<0)){}
+		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer4+1);      // memory = buffer
+		  DMA_IFCR(DMA1) = 0xF;
+		  DMA1_CNDTR1 = 500;
+		  DMA1_CCR1 |= 1<<0;
+		  ADC_CR(ADC1) |= 1<<2;
+        
+        TX_pulses(8);  // your pulse function
+        delay_ms(5);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
+			  
+        cnt = TIM_CNT(TIM3);  // should be ~1000
+			  
+		  //----------------------------------------------- SEND BUFFERS -----------------------------------------------------------------
 			  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
@@ -81,6 +128,20 @@ int main(void)
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer2;
+		  DMA_CNDTR7(DMA1) = 1002;
+		  DMA_CCR7(DMA1) |= (1 << 0);
+		  delay_ms(15);
+		  
+		  DMA_CCR7(DMA1) &= ~(1 << 0);
+		  while (DMA_CCR7(DMA1) & (1 << 0));
+		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer3;
+		  DMA_CNDTR7(DMA1) = 1002;
+		  DMA_CCR7(DMA1) |= (1 << 0);
+		  delay_ms(15);
+		  
+		  DMA_CCR7(DMA1) &= ~(1 << 0);
+		  while (DMA_CCR7(DMA1) & (1 << 0));
+		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer4;
 		  DMA_CNDTR7(DMA1) = 1002;
 		  DMA_CCR7(DMA1) |= (1 << 0);
 		  delay_ms(15);

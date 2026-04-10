@@ -6,13 +6,10 @@ from matplotlib.animation import FuncAnimation
 from scipy.signal import butter, filtfilt, correlate
 from collections import deque
 
-
-
-
 print("done second time")
 
 # -------- CONFIG --------
-PORT = "COM5"
+PORT = "COM6"
 BAUD = 921600
 
 HEADER_SOUTHOUT = 0xAA55
@@ -22,7 +19,7 @@ PAYLOAD_SAMPLES = 500
 
 FS = 1e6
 
-SENSOR_DISTANCE = 0.2   # meters
+SENSOR_DISTANCE = 0.175   # meters
 SOUND_SPEED = 343 
 
 lag_buffer = deque(maxlen=15)
@@ -127,7 +124,7 @@ def update(frame):
     lag_smooth = np.mean([x for x in lag_buffer if abs(x - lag_med) < 2])
     wind_smooth = np.mean([x for x in wind_buffer if abs(x - wind_med) < 2])
 
-    print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s")
+    print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s",end = '          \r')
 
     line1.set_ydata(samples1)
     line2.set_ydata(samples2)
