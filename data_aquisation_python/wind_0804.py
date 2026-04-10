@@ -89,7 +89,6 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
 
 # -------- Update Loop --------
 def update(frame):
-    global count, buffer
 
     samples1, samples2 = read_frame()
 
@@ -116,13 +115,20 @@ def update(frame):
         lag = lag + frac
     dt = lag / FS
     wind_speed = (lag / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
-    
+
+    # ---- STORE ----
     lag_buffer.append(lag)
     wind_buffer.append(wind_speed)
     lag_med = np.median(lag_buffer)
     wind_med = np.median(wind_buffer)
-    lag_smooth = np.mean([x for x in lag_buffer if abs(x - lag_med) < 2])
-    wind_smooth = np.mean([x for x in wind_buffer if abs(x - wind_med) < 2])
+    lag_clean = [x for x in lag_buffer if abs(x - lag_med) < 1]
+    wind_clean = [x for x in wind_buffer if abs(x - wind_med) < 1]
+    if len(lag_clean) == 0:
+        lag_clean = list(lag_buffer)
+    if len(wind_clean) == 0:
+        wind_clean = list(wind_buffer)
+    lag_smooth = np.mean(lag_clean)
+    wind_smooth = np.mean(wind_clean)
 
     print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s | raw: {lag:.2f} | smooth: {lag_smooth:.2f}",end = '          \r')
 
