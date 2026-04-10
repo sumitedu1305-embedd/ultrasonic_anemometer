@@ -124,7 +124,7 @@ def update(frame):
     lag_smooth = np.mean([x for x in lag_buffer if abs(x - lag_med) < 2])
     wind_smooth = np.mean([x for x in wind_buffer if abs(x - wind_med) < 2])
 
-    print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s",end = '          \r')
+    print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s | raw: {lag:.2f} | smooth: {lag_smooth:.2f}",end = '          \r')
 
     line1.set_ydata(samples1)
     line2.set_ydata(samples2)
