@@ -19,11 +19,11 @@ PAYLOAD_SAMPLES = 500
 
 FS = 1e6
 
-SENSOR_DISTANCE = 0.175   # meters
+SENSOR_DISTANCE = 0.210   # meters
 SOUND_SPEED = 343 
 
-lag_buffer = deque(maxlen=15)
-wind_buffer = deque(maxlen=15)
+lag_buffer = deque(maxlen=30)
+wind_buffer = deque(maxlen=30)
 
 # ------------------------
 
@@ -127,8 +127,8 @@ def update(frame):
         lag_clean = list(lag_buffer)
     if len(wind_clean) == 0:
         wind_clean = list(wind_buffer)
-    lag_smooth = np.mean(lag_clean)
-    wind_smooth = np.mean(wind_clean)
+    lag_smooth = np.median(lag_clean)
+    wind_smooth = np.median(wind_clean)
 
     print(f"raw: {wind_speed:.2f} | smooth: {wind_smooth:.2f} m/s | raw: {lag:.2f} | smooth: {lag_smooth:.2f}",end = '          \r')
 
