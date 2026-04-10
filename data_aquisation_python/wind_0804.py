@@ -3,13 +3,13 @@ import struct
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, correlate
 
 
 print("done second time")
 
 # -------- CONFIG --------
-PORT = "COM6"
+PORT = "COM5"
 BAUD = 921600
 
 HEADER_SOUTHOUT = 0xAA55
@@ -18,6 +18,9 @@ HEADER_NORTHOUT = 0xBB55
 PAYLOAD_SAMPLES = 500
 
 FS = 1e6
+
+SENSOR_DISTANCE = 0.2   # meters
+SOUND_SPEED = 343 
 
 # ------------------------
 
@@ -67,8 +70,9 @@ line4, = axs[3].plot(x, np.zeros(PAYLOAD_SAMPLES))
 
 axs[0].set_ylim(-150, 150)
 axs[1].set_ylim(-150, 150)
-axs[2].set_ylim(-150, 150)
-axs[3].set_ylim(-150, 150)
+axs[2].set_ylim(-100, 100)
+axs[3].set_ylim(-100, 100)
+
 
 def bandpass_filter(data, lowcut, highcut, fs, order=4):
     nyquist = 0.5 * fs
@@ -82,6 +86,8 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
 
 # -------- Update Loop --------
 def update(frame):
+    global count, buffer
+
     samples1, samples2 = read_frame()
 
     samples1 = samples1 - np.mean(samples1)
@@ -95,13 +101,26 @@ def update(frame):
     samples1_filtered = bandpass_filter(samples1_hanning,30e3,50e3,FS)
     samples2_filtered = bandpass_filter(samples2_hanning,30e3,50e3,FS)
 
+    s1 = samples1_filtered / (np.std(samples1_filtered) + 1e-8)
+    s2 = samples2_filtered / (np.std(samples2_filtered) + 1e-8)
+    corr = correlate(s1, s2, mode='full')
+    lags = np.arange(-len(s1)+1, len(s1))
+    i = np.argmax(corr)
+    lag = lags[i]
+    if 0 < i < len(corr)-1:
+        y0, y1, y2 = corr[i-1], corr[i], corr[i+1]
+        frac = (y0 - y2) / (2*(y0 - 2*y1 + y2) + 1e-8)
+        lag = lag + frac
+    dt = lag / FS
+    wind_speed = (lag / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
+    print(f"lag: {lag:.3f} samples | dt: {dt*1e6:.2f} us | wind: {wind_speed:.2f} m/s",end = "              \r")
+
     line1.set_ydata(samples1)
     line2.set_ydata(samples2)
     line3.set_ydata(samples1_filtered)
     line4.set_ydata(samples2_filtered)
 
-    return line1, line2
-
+    return line1, line2, line3, line4
 
 try:
     # -------- Run --------
