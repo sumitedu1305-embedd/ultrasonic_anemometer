@@ -1,9 +1,9 @@
 #include "main.h"
 
-uint16_t adc_buffer1[501] = {[0]=0xAA55};
-uint16_t adc_buffer2[501] = {[0]=0xBB55};
-uint16_t adc_buffer3[501] = {[0]=0xCC55};
-uint16_t adc_buffer4[501] = {[0]=0xDD55};
+uint16_t adc_buffer1[351] = {[0]=0xAA55};
+uint16_t adc_buffer2[351] = {[0]=0xBB55};
+uint16_t adc_buffer3[351] = {[0]=0xCC55};
+uint16_t adc_buffer4[351] = {[0]=0xDD55};
 uint32_t hello;
 uint32_t cnt = 0;
 
@@ -14,7 +14,7 @@ int main(void)
 	TIM15_DelayInit();
 	TIM16_PWM_BurstInit();
 	TIM4_TriggerInit();
-	TIM1_GateForADCTimer(500);
+	TIM1_GateForADCTimer(350);
 	TIM2_SlaveGateMode_TIM1();
 	TIM3_RateCheckADC_EVTCheckTIM2();
 	ADC1_DMA_TIM2_Config();
@@ -44,7 +44,7 @@ int main(void)
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer1+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 500;
+		  DMA1_CNDTR1 = 350;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
@@ -65,7 +65,7 @@ int main(void)
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer2+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 500;
+		  DMA1_CNDTR1 = 350;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
@@ -86,7 +86,7 @@ int main(void)
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer3+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 500;
+		  DMA1_CNDTR1 = 350;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
@@ -107,7 +107,7 @@ int main(void)
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer4+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 500;
+		  DMA1_CNDTR1 = 350;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
@@ -121,28 +121,28 @@ int main(void)
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer1;
-		  DMA_CNDTR7(DMA1) = 1002;
+		  DMA_CNDTR7(DMA1) = 702;
 		  DMA_CCR7(DMA1) |= (1 << 0);
 		  delay_ms(15);
 			  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer2;
-		  DMA_CNDTR7(DMA1) = 1002;
+		  DMA_CNDTR7(DMA1) = 702;
 		  DMA_CCR7(DMA1) |= (1 << 0);
 		  delay_ms(15);
 		  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer3;
-		  DMA_CNDTR7(DMA1) = 1002;
+		  DMA_CNDTR7(DMA1) = 702;
 		  DMA_CCR7(DMA1) |= (1 << 0);
 		  delay_ms(15);
 		  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer4;
-		  DMA_CNDTR7(DMA1) = 1002;
+		  DMA_CNDTR7(DMA1) = 702;
 		  DMA_CCR7(DMA1) |= (1 << 0);
 		  delay_ms(15);
 			  
@@ -360,7 +360,7 @@ void TIM4_TriggerInit(void)
 
     TIM_CR1(TIM4) = 0;                  // disable timer
     TIM_PSC(TIM4) = 79;                 // 1 MHz tick (80MHz / 80)
-    TIM_ARR(TIM4) = 250;                // 200 us
+    TIM_ARR(TIM4) = 400;                // 200 us
     TIM_EGR(TIM4) |= 1;                 // UG = latch ARR
 	 TIM_SR(TIM4) &= ~1; 					 //needed as writting egr makes update event to rewrite shadow register and thus interrupts will start firring as soon as initialized
     TIM_CR1(TIM4) |= (1 << 3);          // OPM = 1 (one pulse mode)

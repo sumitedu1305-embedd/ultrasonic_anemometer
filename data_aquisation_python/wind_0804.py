@@ -16,7 +16,7 @@ HEADER_NORTHOUT = 0xBB55
 HEADER_WESTOUT = 0xCC55
 HEADER_EASTOUT = 0xDD55
 
-PAYLOAD_SAMPLES = 500
+PAYLOAD_SAMPLES = 350
 
 FS = 1e6
 
@@ -216,11 +216,6 @@ def update(frame):
     wind_speed = (np.sqrt(wind_smooth_ns**2 + wind_smooth_ew**2))
     direction_rad = np.arctan2(wind_speed_ew,wind_speed_ns)    
     direction_deg = (np.degrees(direction_rad) + 360) % 360
-
-    print(f"NS -> {lag_smooth_ns:.3f} : {wind_speed_ns:.3f}")
-    print(f"EW -> {lag_smooth_ew:.3f} : {wind_speed_ew:.3f}")
-    print(f"WS -> {wind_speed:.3f} | WD -> {direction_deg:.3f}")
-    print("\n\n")
 
     line1.set_ydata(samples1)
     line3.set_ydata(samples2)
