@@ -1,20 +1,21 @@
-import serial
-import struct
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
+"""
+COMPASS PATCH for wind_anemometer.py
+─────────────────────────────────────
+Replace your plot-setup block and update() function with the versions below.
+Everything else (serial reader thread, DSP, smoothing) stays identical.
+"""
+
+import serial, struct, numpy as np
+import matplotlib.pyplot as plt, matplotlib.patches as mpatches
+import matplotlib.patheffects as pe
 from matplotlib.animation import FuncAnimation
+from matplotlib.patches import FancyArrow
 from scipy.signal import butter, filtfilt, correlate
 from collections import deque
-import threading
-import queue
-import os
-import sys
+import threading, queue, os, sys
 
-matplotlib.use('TkAgg')  # Fast backend; change to 'Qt5Agg' if you prefer
-
-# -------- CONFIG --------
-PORT = "COM6"
+# -------- CONFIG (unchanged) --------
+PORT = "COM5"
 BAUD = 921600
 
 HEADER_SOUTHOUT = 0xAA55
@@ -24,58 +25,44 @@ HEADER_EASTOUT  = 0xDD55
 
 PAYLOAD_SAMPLES = 350
 FS              = 1e6
-SENSOR_DISTANCE = 0.210   # meters
+SENSOR_DISTANCE = 0.210
 SOUND_SPEED     = 343.0
 
-# Threading
-frame_queue   = queue.Queue(maxsize=4)   # small cap: drop stale frames, stay realtime
-stop_event    = threading.Event()
+frame_queue = queue.Queue(maxsize=4)
+stop_event  = threading.Event()
 
-# Smoothing buffers
 lag_buffer_ns  = deque(maxlen=30)
 wind_buffer_ns = deque(maxlen=30)
 lag_buffer_ew  = deque(maxlen=30)
 wind_buffer_ew = deque(maxlen=30)
-# ------------------------
 
-
-# -------- Serial Reader Thread --------
+# -------- Serial Reader (unchanged from threaded version) --------
 def serial_reader(port, baud):
-    """Runs in background: reads frames, pushes into frame_queue. Never blocks the plot."""
     try:
         ser = serial.Serial(port, baud, timeout=1)
     except serial.SerialException as e:
-        print(f"[serial_reader] ERROR opening port: {e}")
-        stop_event.set()
-        return
+        print(f"[serial_reader] ERROR: {e}")
+        stop_event.set(); return
 
     def read_exact(n):
         buf = b''
         while len(buf) < n and not stop_event.is_set():
             chunk = ser.read(n - len(buf))
-            if chunk:
-                buf += chunk
+            if chunk: buf += chunk
         return buf
 
     def expect_header(expected):
-        """Drain until we find the expected 2-byte header."""
         while not stop_event.is_set():
             b = ser.read(1)
-            if not b:
-                continue
-            low = b[0]
+            if not b: continue
             b2 = ser.read(1)
-            if not b2:
-                continue
-            val = low | (b2[0] << 8)
-            if val == expected:
-                return True
+            if not b2: continue
+            if (b[0] | (b2[0] << 8)) == expected: return True
         return False
 
     def read_payload():
         data = read_exact(PAYLOAD_SAMPLES * 2)
-        if len(data) != PAYLOAD_SAMPLES * 2:
-            return None
+        if len(data) != PAYLOAD_SAMPLES * 2: return None
         return np.array(struct.unpack('<' + 'H' * PAYLOAD_SAMPLES, data), dtype=np.float32)
 
     while not stop_event.is_set():
@@ -83,209 +70,242 @@ def serial_reader(port, baud):
             if not expect_header(HEADER_SOUTHOUT): break
             s1 = read_payload()
             if s1 is None: continue
-
             if not expect_header(HEADER_NORTHOUT): break
             s2 = read_payload()
             if s2 is None: continue
-
             if not expect_header(HEADER_WESTOUT): break
             s3 = read_payload()
             if s3 is None: continue
-
             if not expect_header(HEADER_EASTOUT): break
             s4 = read_payload()
             if s4 is None: continue
 
-            # Non-blocking put: if queue is full, drop oldest frame to stay realtime
             if frame_queue.full():
-                try:
-                    frame_queue.get_nowait()
-                except queue.Empty:
-                    pass
+                try: frame_queue.get_nowait()
+                except queue.Empty: pass
             frame_queue.put_nowait((s1, s2, s3, s4))
-
         except Exception as e:
-            if not stop_event.is_set():
-                print(f"[serial_reader] Exception: {e}")
-
+            if not stop_event.is_set(): print(f"[serial_reader] {e}")
     ser.close()
-    print("[serial_reader] Stopped.")
 
-
-# -------- DSP --------
+# -------- DSP (unchanged) --------
 _butter_cache = {}
 
-def get_butter_coeffs(lowcut, highcut, fs, order=4):
-    key = (lowcut, highcut, fs, order)
+def get_butter_coeffs(lc, hc, fs, order=4):
+    key = (lc, hc, fs, order)
     if key not in _butter_cache:
-        nyquist = 0.5 * fs
-        b, a = butter(order, [lowcut / nyquist, highcut / nyquist], btype='band')
+        nyq = 0.5 * fs
+        b, a = butter(order, [lc/nyq, hc/nyq], btype='band')
         _butter_cache[key] = (b, a)
     return _butter_cache[key]
 
-def bandpass_filter(data, lowcut, highcut, fs, order=4):
-    b, a = get_butter_coeffs(lowcut, highcut, fs, order)
+def bandpass_filter(data, lc, hc, fs, order=4):
+    b, a = get_butter_coeffs(lc, hc, fs, order)
     return filtfilt(b, a, data)
 
-def smooth_median(buf, new_val, threshold=2):
-    buf.append(new_val)
+def smooth_median(buf, val, threshold=2):
+    buf.append(val)
     med = np.median(buf)
     clean = [x for x in buf if abs(x - med) < threshold] or list(buf)
     return float(np.median(clean))
 
-
-# -------- Plot Setup --------
-fig, axs = plt.subplots(4, 2, figsize=(10, 7), sharex=True)
-fig.patch.set_facecolor('#0d0d0d')
-axs_flat = axs.flatten()
-
-x = np.arange(PAYLOAD_SAMPLES)
-LABELS = [
-    "S raw", "S filtered",
-    "N raw", "N filtered",
-    "W raw", "W filtered",
-    "E raw", "E filtered",
-]
-COLORS_RAW  = '#3a7bd5'
-COLORS_FILT = '#00d2ff'
-
-lines = []
-for i, ax in enumerate(axs_flat):
-    ax.set_facecolor('#111111')
-    ax.tick_params(colors='#888888', labelsize=7)
-    for spine in ax.spines.values():
-        spine.set_edgecolor('#333333')
-    color = COLORS_FILT if i % 2 else COLORS_RAW
-    ln, = ax.plot(x, np.zeros(PAYLOAD_SAMPLES), lw=0.8, color=color)
-    ax.set_ylim(-100, 100)
-    ax.set_title(LABELS[i], color='#aaaaaa', fontsize=7, pad=2)
-    lines.append(ln)
-
-# Wind info text on the figure
-info_text = fig.text(
-    0.5, 0.01,
-    "Wind: -- m/s | Dir: --° | Lag N/S: -- | Lag E/W: --",
-    ha='center', va='bottom', fontsize=9,
-    color='#00ffcc', fontfamily='monospace',
-    bbox=dict(boxstyle='round,pad=0.3', facecolor='#1a1a1a', edgecolor='#333333')
-)
-
-plt.tight_layout(rect=[0, 0.04, 1, 1])
-os.system('cls' if os.name == 'nt' else 'clear')
-
-# Pre-build hanning windows (same length every frame)
 _hanning = np.hanning(PAYLOAD_SAMPLES)
 
+# -------- Plot & Compass Setup --------
+BG  = '#0d0d0d'
+FG  = '#cccccc'
+RED = '#e24b4a'
+DIM = '#444444'
 
-# -------- Update Loop (main thread) --------
+fig = plt.figure(figsize=(12, 7), facecolor=BG)
+
+# Left side: 4×2 signal grid (takes 60% of width)
+gs = fig.add_gridspec(4, 3, left=0.04, right=0.96, top=0.95, bottom=0.04,
+                       hspace=0.35, wspace=0.3)
+
+sig_axes = [fig.add_subplot(gs[r, c]) for r in range(4) for c in range(2)]
+ax_compass = fig.add_subplot(gs[:, 2])   # right column: compass
+
+LABELS = ['S raw','S filt','N raw','N filt','W raw','W filt','E raw','E filt']
+sig_lines = []
+x = np.arange(PAYLOAD_SAMPLES)
+for i, ax in enumerate(sig_axes):
+    ax.set_facecolor('#111111')
+    ax.tick_params(colors='#555555', labelsize=6)
+    for sp in ax.spines.values(): sp.set_edgecolor('#2a2a2a')
+    color = '#00d2ff' if i % 2 else '#3a7bd5'
+    ln, = ax.plot(x, np.zeros(PAYLOAD_SAMPLES), lw=0.7, color=color)
+    ax.set_ylim(-100, 100)
+    ax.set_title(LABELS[i], color='#666666', fontsize=7, pad=1)
+    sig_lines.append(ln)
+
+# -------- Compass Axes --------
+ax_compass.set_facecolor(BG)
+ax_compass.set_aspect('equal')
+ax_compass.set_xlim(-1.3, 1.3)
+ax_compass.set_ylim(-1.3, 1.3)
+ax_compass.axis('off')
+
+# Rings
+for r, alpha in [(1.0, 0.25), (0.7, 0.15), (0.4, 0.10)]:
+    ring = plt.Circle((0, 0), r, color=FG, fill=False, lw=0.5, alpha=alpha)
+    ax_compass.add_patch(ring)
+
+# Cardinal ticks & labels
+CARDINALS = [('N', 0), ('NE', 45), ('E', 90), ('SE', 135),
+             ('S', 180), ('SW', 225), ('W', 270), ('NW', 315)]
+for label, deg in CARDINALS:
+    rad = np.radians(deg)
+    x0, y0 = np.sin(rad)*0.90, np.cos(rad)*0.90
+    x1, y1 = np.sin(rad)*1.00, np.cos(rad)*1.00
+    ax_compass.plot([x0, x1], [y0, y1], color=DIM, lw=0.8)
+    xl, yl = np.sin(rad)*1.15, np.cos(rad)*1.15
+    is_card = len(label) == 1
+    ax_compass.text(xl, yl, label,
+                    ha='center', va='center',
+                    fontsize=9 if is_card else 6,
+                    color=FG if is_card else DIM,
+                    fontweight='bold' if is_card else 'normal')
+
+# Minor ticks every 10°
+for deg in range(0, 360, 10):
+    if deg % 45 == 0: continue
+    rad = np.radians(deg)
+    x0, y0 = np.sin(rad)*0.95, np.cos(rad)*0.95
+    x1, y1 = np.sin(rad)*1.00, np.cos(rad)*1.00
+    ax_compass.plot([x0, x1], [y0, y1], color=DIM, lw=0.4)
+
+# Speed circle (filled, scales with wind speed)
+speed_circle = plt.Circle((0, 0), 0.01, color=RED, alpha=0.15, fill=True)
+ax_compass.add_patch(speed_circle)
+
+# Arrow: starts as a vertical line, rotated each frame
+arrow_line,  = ax_compass.plot([0, 0], [0,  0.65], color=RED, lw=2.5, solid_capstyle='round')
+arrow_head,  = ax_compass.plot([0], [0.65], marker='^', ms=8, color=RED, markeredgewidth=0)
+arrow_tail,  = ax_compass.plot([0, 0], [0, -0.30], color=DIM, lw=1.2,
+                                linestyle='--', dash_capstyle='round')
+
+center_dot = ax_compass.plot(0, 0, 'o', color=FG, ms=4, zorder=5)[0]
+
+# Text readouts inside compass
+spd_txt = ax_compass.text(0, -1.1,  '-- m/s', ha='center', va='center',
+                           fontsize=10, color=RED, fontfamily='monospace')
+dir_txt = ax_compass.text(0,  1.25, '--°',    ha='center', va='center',
+                           fontsize=8,  color=FG,  fontfamily='monospace')
+lag_txt = ax_compass.text(0, -1.22, 'N/S: --  E/W: --', ha='center', va='center',
+                           fontsize=6.5, color=DIM, fontfamily='monospace')
+
+compass_title = ax_compass.text(0, 1.38, 'WIND', ha='center', va='center',
+                                 fontsize=9, color=DIM, fontfamily='monospace',
+                                 fontweight='bold')
+
+# -------- Helpers --------
+def dir_label(deg):
+    dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
+            'S','SSW','SW','WSW','W','WNW','NW','NNW']
+    return dirs[int((deg + 11.25) / 22.5) % 16]
+
+def rotate_point(x, y, deg):
+    rad = np.radians(deg)
+    c, s = np.cos(rad), np.sin(rad)
+    return c*x - s*y, s*x + c*y
+
+MAX_SPEED = 25.0   # m/s — max for speed ring scaling
+
+# -------- Update --------
 def update(frame_num):
     try:
         s1, s2, s3, s4 = frame_queue.get_nowait()
     except queue.Empty:
-        return lines  # nothing new, keep old display
+        return sig_lines + [arrow_line, arrow_head, arrow_tail, speed_circle,
+                             spd_txt, dir_txt, lag_txt]
 
-    # DC removal
-    s1 = s1 - s1.mean()
-    s2 = s2 - s2.mean()
-    s3 = s3 - s3.mean()
-    s4 = s4 - s4.mean()
+    s1 = s1 - s1.mean(); s2 = s2 - s2.mean()
+    s3 = s3 - s3.mean(); s4 = s4 - s4.mean()
 
-    # Windowing
-    s1h = s1 * _hanning
-    s2h = s2 * _hanning
-    s3h = s3 * _hanning
-    s4h = s4 * _hanning
+    s1h = s1 * _hanning; s2h = s2 * _hanning
+    s3h = s3 * _hanning; s4h = s4 * _hanning
 
-    # Bandpass
     s1f = bandpass_filter(s1h, 30e3, 50e3, FS)
     s2f = bandpass_filter(s2h, 30e3, 50e3, FS)
     s3f = bandpass_filter(s3h, 30e3, 50e3, FS)
     s4f = bandpass_filter(s4h, 30e3, 50e3, FS)
 
-    # Cross-correlation N/S
-    n1 = s1f / (s1f.std() + 1e-8)
-    n2 = s2f / (s2f.std() + 1e-8)
+    n1 = s1f / (s1f.std() + 1e-8); n2 = s2f / (s2f.std() + 1e-8)
     corr_ns = correlate(n1, n2, mode='full')
-    lags_ns  = np.arange(-len(n1)+1, len(n1))
-    i_ns     = int(np.argmax(corr_ns))
-    lag_ns   = float(lags_ns[i_ns])
+    lags_ns = np.arange(-len(n1)+1, len(n1))
+    i_ns = int(np.argmax(corr_ns)); lag_ns = float(lags_ns[i_ns])
     if 0 < i_ns < len(corr_ns)-1:
-        y0, y1, y2 = corr_ns[i_ns-1], corr_ns[i_ns], corr_ns[i_ns+1]
-        frac   = (y0 - y2) / (2*(y0 - 2*y1 + y2) + 1e-8)
-        lag_ns = lag_ns + frac
-    wind_speed_ns = (lag_ns / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
+        y0,y1,y2 = corr_ns[i_ns-1], corr_ns[i_ns], corr_ns[i_ns+1]
+        lag_ns += (y0-y2)/(2*(y0-2*y1+y2)+1e-8)
+    wind_ns = -(lag_ns / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
 
-    # Cross-correlation E/W
-    n3 = s3f / (s3f.std() + 1e-8)
-    n4 = s4f / (s4f.std() + 1e-8)
+    n3 = s3f / (s3f.std() + 1e-8); n4 = s4f / (s4f.std() + 1e-8)
     corr_ew = correlate(n3, n4, mode='full')
-    lags_ew  = np.arange(-len(n3)+1, len(n3))
-    i_ew     = int(np.argmax(corr_ew))
-    lag_ew   = float(lags_ew[i_ew])
+    lags_ew = np.arange(-len(n3)+1, len(n3))
+    i_ew = int(np.argmax(corr_ew)); lag_ew = float(lags_ew[i_ew])
     if 0 < i_ew < len(corr_ew)-1:
-        y0, y1, y2 = corr_ew[i_ew-1], corr_ew[i_ew], corr_ew[i_ew+1]
-        frac   = (y0 - y2) / (2*(y0 - 2*y1 + y2) + 1e-8)
-        lag_ew = lag_ew + frac
-    wind_speed_ew = (lag_ew / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
+        y0,y1,y2 = corr_ew[i_ew-1], corr_ew[i_ew], corr_ew[i_ew+1]
+        lag_ew += (y0-y2)/(2*(y0-2*y1+y2)+1e-8)
+    wind_ew = -(lag_ew / FS) * (SOUND_SPEED**2 / SENSOR_DISTANCE)
 
-    # Smoothing (your original median-based logic, unchanged)
-    lag_smooth_ns  = smooth_median(lag_buffer_ns,  lag_ns)
-    wind_smooth_ns = smooth_median(wind_buffer_ns,  wind_speed_ns)
-    lag_smooth_ew  = smooth_median(lag_buffer_ew,  lag_ew)
-    wind_smooth_ew = smooth_median(wind_buffer_ew,  wind_speed_ew)
+    lag_sn  = smooth_median(lag_buffer_ns,  lag_ns)
+    wind_sn = smooth_median(wind_buffer_ns, wind_ns)
+    lag_se  = smooth_median(lag_buffer_ew,  lag_ew)
+    wind_se = smooth_median(wind_buffer_ew, wind_ew)
 
-    wind_speed    = np.sqrt(wind_smooth_ns**2 + wind_smooth_ew**2)
-    direction_rad = np.arctan2(wind_smooth_ew, wind_smooth_ns)
+    wind_speed    = np.sqrt(wind_sn**2 + wind_se**2)
+    direction_rad = np.arctan2(wind_se, wind_sn)
     direction_deg = (np.degrees(direction_rad) + 360) % 360
 
-    # ---- Terminal print (single overwriting line) ----
+    # ---- Terminal ----
     sys.stdout.write(
-        f"\r Wind: {wind_speed:6.2f} m/s | Dir: {direction_deg:6.1f}° "
-        f"| Lag N/S: {lag_smooth_ns:+8.2f} samples "
-        f"| Lag E/W: {lag_smooth_ew:+8.2f} samples   "
+        f"\r Wind: {wind_speed:6.2f} m/s | Dir: {direction_deg:6.1f}° {dir_label(direction_deg):<3s} "
+        f"| Lag N/S: {lag_sn:+8.2f} | Lag E/W: {lag_se:+8.2f}   "
     )
     sys.stdout.flush()
 
-    # ---- Update figure overlay text ----
-    info_text.set_text(
-        f"Wind: {wind_speed:.2f} m/s  |  Dir: {direction_deg:.1f}°  "
-        f"|  Lag N/S: {lag_smooth_ns:+.2f}  |  Lag E/W: {lag_smooth_ew:+.2f}"
-    )
+    # ---- Compass arrow (rotate unit vector) ----
+    ax_px, ay_px = rotate_point(0,  0.65, direction_deg)
+    tail_x, tail_y = rotate_point(0, -0.30, direction_deg)
+    arrow_line.set_data([0, ax_px], [0, ay_px])
+    arrow_head.set_data([ax_px], [ay_px])
+    arrow_tail.set_data([0, tail_x], [0, tail_y])
 
-    # ---- Plot data ----
-    raw_ylim  = max(np.max(np.abs(s1)), np.max(np.abs(s2)),
-                    np.max(np.abs(s3)), np.max(np.abs(s4))) * 1.2 + 1
-    filt_ylim = max(np.max(np.abs(s1f)), np.max(np.abs(s2f)),
-                    np.max(np.abs(s3f)), np.max(np.abs(s4f))) * 1.2 + 1
+    # Rotate head marker
+    arrow_head.set_marker((3, 0, direction_deg))   # triangle marker rotated
 
-    raw_pairs  = [(0, s1),  (2, s2),  (4, s3),  (6, s4)]
-    filt_pairs = [(1, s1f), (3, s2f), (5, s3f), (7, s4f)]
+    # Speed ring
+    r = min(wind_speed / MAX_SPEED, 1.0) * 0.85
+    speed_circle.set_radius(max(r, 0.01))
 
-    for idx, data in raw_pairs:
-        lines[idx].set_ydata(data)
-        axs_flat[idx].set_ylim(-raw_ylim, raw_ylim)
+    # Text
+    spd_txt.set_text(f'{wind_speed:.1f} m/s')
+    dir_txt.set_text(f'{direction_deg:.0f}° {dir_label(direction_deg)}')
+    lag_txt.set_text(f'N/S {lag_sn:+.1f}  E/W {lag_se:+.1f}')
 
-    for idx, data in filt_pairs:
-        lines[idx].set_ydata(data)
-        axs_flat[idx].set_ylim(-filt_ylim, filt_ylim)
+    # ---- Signal plots ----
+    raw_lim  = max(np.max(np.abs(s1)), np.max(np.abs(s2)),
+                   np.max(np.abs(s3)), np.max(np.abs(s4))) * 1.2 + 1
+    filt_lim = max(np.max(np.abs(s1f)), np.max(np.abs(s2f)),
+                   np.max(np.abs(s3f)), np.max(np.abs(s4f))) * 1.2 + 1
 
-    return lines
+    for idx, data, lim in [(0,s1,raw_lim),(1,s1f,filt_lim),(2,s2,raw_lim),(3,s2f,filt_lim),
+                            (4,s3,raw_lim),(5,s3f,filt_lim),(6,s4,raw_lim),(7,s4f,filt_lim)]:
+        sig_lines[idx].set_ydata(data)
+        sig_axes[idx].set_ylim(-lim, lim)
+
+    return sig_lines + [arrow_line, arrow_head, arrow_tail, speed_circle,
+                        spd_txt, dir_txt, lag_txt]
 
 
-# -------- Main --------
 if __name__ == '__main__':
-    # Start serial reader in daemon thread
-    reader_thread = threading.Thread(target=serial_reader, args=(PORT, BAUD), daemon=True)
-    reader_thread.start()
-    print("Serial reader started. Close the plot window or Ctrl+C to stop.\n")
+    reader = threading.Thread(target=serial_reader, args=(PORT, BAUD), daemon=True)
+    reader.start()
+    print("Running — close window or Ctrl+C to stop.\n")
 
     try:
-        ani = FuncAnimation(
-            fig, update,
-            interval=50,      # ms between frames; lower = faster but more CPU
-            blit=True,        # only redraw changed artists = much faster
-            cache_frame_data=False
-        )
+        ani = FuncAnimation(fig, update, interval=50, blit=True, cache_frame_data=False)
         plt.show()
     except KeyboardInterrupt:
         pass
