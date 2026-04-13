@@ -123,8 +123,7 @@ GRN = '#00c97d'
 fig = plt.figure(figsize=(12, 7), facecolor=BG)
 fig.canvas.manager.set_window_title('Wind Anemometer — press C to calibrate')
 
-gs = fig.add_gridspec(4, 3, left=0.04, right=0.96, top=0.95, bottom=0.04,
-                       hspace=0.35, wspace=0.3)
+gs = fig.add_gridspec(4, 3, left=0.04, right=0.96, top=0.95, bottom=0.04, hspace=0.35, wspace=0.3)
 
 sig_axes = [fig.add_subplot(gs[r, c]) for r in range(4) for c in range(2)]
 ax_compass = fig.add_subplot(gs[:, 2])
@@ -152,8 +151,7 @@ ax_compass.axis('off')
 for r, alpha in [(1.0, 0.25), (0.7, 0.15), (0.4, 0.10)]:
     ax_compass.add_patch(plt.Circle((0, 0), r, color=FG, fill=False, lw=0.5, alpha=alpha))
 
-CARDINALS = [('N',0),('NE',45),('E',90),('SE',135),
-             ('S',180),('SW',225),('W',270),('NW',315)]
+CARDINALS = [('N',0),('NE',45),('E',90),('SE',135), ('S',180),('SW',225),('W',270),('NW',315)]
 for label, deg in CARDINALS:
     rad = np.radians(deg)
     ax_compass.plot([np.sin(rad)*0.90, np.sin(rad)*1.00],
@@ -330,8 +328,7 @@ def update(frame_num):
         sig_lines[idx].set_ydata(data)
         sig_axes[idx].set_ylim(-lim, lim)
 
-    return sig_lines + [arrow_line, arrow_head, arrow_tail, speed_circle,
-                        spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
+    return sig_lines + [arrow_line, arrow_head, arrow_tail, speed_circle, spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
 
 
 if __name__ == '__main__':
