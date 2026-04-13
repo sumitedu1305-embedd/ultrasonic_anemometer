@@ -15,7 +15,7 @@ from collections import deque
 import threading, queue, os, sys
 
 # -------- CONFIG (unchanged) --------
-PORT = "COM5"
+PORT = "COM6"
 BAUD = 921600
 
 HEADER_SOUTHOUT = 0xAA55
@@ -126,7 +126,7 @@ gs = fig.add_gridspec(4, 3, left=0.04, right=0.96, top=0.95, bottom=0.04,
 sig_axes = [fig.add_subplot(gs[r, c]) for r in range(4) for c in range(2)]
 ax_compass = fig.add_subplot(gs[:, 2])   # right column: compass
 
-LABELS = ['S raw','S filt','N raw','N filt','W raw','W filt','E raw','E filt']
+LABELS = ['N raw','N filt','S raw','S filt','E raw','E filt','W raw','W filt']
 sig_lines = []
 x = np.arange(PAYLOAD_SAMPLES)
 for i, ax in enumerate(sig_axes):
