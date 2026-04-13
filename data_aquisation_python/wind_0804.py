@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from scipy.signal import butter, filtfilt, correlate
 from collections import deque
-
-print("done second time")
+import os
 
 # -------- CONFIG --------
 PORT = "COM6"
@@ -117,14 +116,16 @@ line6, = axs_flat[5].plot(x, np.zeros(PAYLOAD_SAMPLES))
 line7, = axs_flat[6].plot(x, np.zeros(PAYLOAD_SAMPLES))
 line8, = axs_flat[7].plot(x, np.zeros(PAYLOAD_SAMPLES))
 
-axs_flat[0].set_ylim(-150, 150)
-axs_flat[1].set_ylim(-150, 150)
+axs_flat[0].set_ylim(-100, 100)
+axs_flat[1].set_ylim(-50, 50)
 axs_flat[2].set_ylim(-100, 100)
-axs_flat[3].set_ylim(-100, 100)
-axs_flat[4].set_ylim(-150, 150)
-axs_flat[5].set_ylim(-150, 150)
+axs_flat[3].set_ylim(-50, 50)
+axs_flat[4].set_ylim(-100, 100)
+axs_flat[5].set_ylim(-50, 50)
 axs_flat[6].set_ylim(-100, 100)
-axs_flat[7].set_ylim(-100, 100)
+axs_flat[7].set_ylim(-50, 50)
+
+os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def bandpass_filter(data, lowcut, highcut, fs, order=4):
@@ -212,14 +213,23 @@ def update(frame):
     lag_smooth_ew = np.median(lag_clean_ew)
     wind_smooth_ew = np.median(wind_clean_ew)
 
-    line1.set_ydata(samples1)
-    line2.set_ydata(samples2)
-    line5.set_ydata(samples1_filtered)
-    line6.set_ydata(samples2_filtered)
+    wind_speed = (np.sqrt(wind_smooth_ns**2 + wind_smooth_ew**2))
+    direction_rad = np.arctan2(wind_speed_ew,wind_speed_ns)    
+    direction_deg = (np.degrees(direction_rad) + 360) % 360
 
-    line3.set_ydata(samples3)
-    line4.set_ydata(samples4)
-    line7.set_ydata(samples3_filtered)
+    print(f"NS -> {lag_smooth_ns:.3f} : {wind_speed_ns:.3f}")
+    print(f"EW -> {lag_smooth_ew:.3f} : {wind_speed_ew:.3f}")
+    print(f"WS -> {wind_speed:.3f} | WD -> {direction_deg:.3f}")
+    print("\n\n")
+
+    line1.set_ydata(samples1)
+    line3.set_ydata(samples2)
+    line5.set_ydata(samples3)
+    line7.set_ydata(samples4)
+
+    line2.set_ydata(samples1_filtered)
+    line4.set_ydata(samples2_filtered)
+    line6.set_ydata(samples3_filtered)
     line8.set_ydata(samples4_filtered)
 
     return line1, line2, line3, line4, line5, line6, line7, line8
