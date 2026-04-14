@@ -360,7 +360,7 @@ void TIM4_TriggerInit(void)
 
     TIM_CR1(TIM4) = 0;                  // disable timer
     TIM_PSC(TIM4) = 79;                 // 1 MHz tick (80MHz / 80)
-    TIM_ARR(TIM4) = 400;                // 200 us
+    TIM_ARR(TIM4) = 300;                // 200 us
     TIM_EGR(TIM4) |= 1;                 // UG = latch ARR
 	 TIM_SR(TIM4) &= ~1; 					 //needed as writting egr makes update event to rewrite shadow register and thus interrupts will start firring as soon as initialized
     TIM_CR1(TIM4) |= (1 << 3);          // OPM = 1 (one pulse mode)
