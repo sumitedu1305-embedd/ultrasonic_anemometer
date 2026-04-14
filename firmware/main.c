@@ -80,7 +80,7 @@ int main(void)
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,0);
 		  
 		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
-        TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
+          TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
 			
 		  DMA1_CCR1 &= ~(1<<0);
 		  while(DMA1_CCR1 & (1<<0)){}
@@ -101,7 +101,7 @@ int main(void)
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,1);
 		  
 		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
-        TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
+          TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
 			
 		  DMA1_CCR1 &= ~(1<<0);
 		  while(DMA1_CCR1 & (1<<0)){}
