@@ -5,8 +5,6 @@ from scipy.signal import butter, filtfilt, correlate
 from collections import deque
 import threading, queue, os, sys
 
-#new for relfector based config
-
 # -------- CONFIG --------
 PORT = "COM6"
 BAUD = 921600
