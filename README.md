@@ -1,4 +1,2 @@
-orthogonal configuration
-
-
+reflector based configuration
 
