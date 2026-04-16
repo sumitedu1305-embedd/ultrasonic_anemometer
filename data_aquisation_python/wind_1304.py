@@ -9,6 +9,8 @@ import threading, queue, os, sys
 PORT = "COM6"
 BAUD = 921600
 
+SILENT_END = 80   # samples; adjust to where echo starts on your earliest channel
+
 HEADER_SOUTHOUT = 0xAA55
 HEADER_NORTHOUT = 0xBB55
 HEADER_WESTOUT  = 0xCC55
@@ -37,6 +39,9 @@ calib_lags_ns     = []
 calib_lags_ew     = []
 offset_ns         = 0.0   # samples, subtracted before wind calc
 offset_ew         = 0.0
+
+def remove_dc(sig, silent_end=SILENT_END):
+    return sig - sig[:silent_end].mean()
 
 # -------- Serial Reader --------
 def serial_reader(port, baud):
@@ -225,8 +230,8 @@ def update(frame_num):
                              spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
 
     # DC + window + filter
-    s1 = s1 - s1.mean(); s2 = s2 - s2.mean()
-    s3 = s3 - s3.mean(); s4 = s4 - s4.mean()
+    s1 = remove_dc(s1); s2 = remove_dc(s2)
+    s3 = remove_dc(s3); s4 = remove_dc(s4)
 
     s1f = bandpass_filter(s1 * _hanning, 30e3, 50e3, FS)
     s2f = bandpass_filter(s2 * _hanning, 30e3, 50e3, FS)
