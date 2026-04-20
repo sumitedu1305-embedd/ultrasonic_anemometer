@@ -1,9 +1,9 @@
 #include "main.h"
 
-uint16_t adc_buffer1[351] = {[0]=0xAA55};
-uint16_t adc_buffer2[351] = {[0]=0xBB55};
-uint16_t adc_buffer3[351] = {[0]=0xCC55};
-uint16_t adc_buffer4[351] = {[0]=0xDD55};
+uint16_t adc_buffer1[BUFFER_SIZE + 1] = {[0]=0xAA55};
+uint16_t adc_buffer2[BUFFER_SIZE + 1] = {[0]=0xBB55};
+uint16_t adc_buffer3[BUFFER_SIZE + 1] = {[0]=0xCC55};
+uint16_t adc_buffer4[BUFFER_SIZE + 1] = {[0]=0xDD55};
 uint32_t hello;
 uint32_t cnt = 0;
 
@@ -14,7 +14,7 @@ int main(void)
 	TIM15_DelayInit();
 	TIM16_PWM_BurstInit();
 	TIM4_TriggerInit();
-	TIM1_GateForADCTimer(350);
+	TIM1_GateForADCTimer(BUFFER_SIZE);
 	TIM2_SlaveGateMode_TIM1();
 	TIM3_RateCheckADC_EVTCheckTIM2();
 	ADC1_DMA_TIM2_Config();
@@ -44,12 +44,12 @@ int main(void)
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer1+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 350;
+		  DMA1_CNDTR1 = BUFFER_SIZE;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
-        TX_pulses(8);  // your pulse function
-        delay_ms(5);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
+        TX_pulses(PULSE_COUNT);  //  pulse function
+        delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
 		  
@@ -65,12 +65,12 @@ int main(void)
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer2+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 350;
+		  DMA1_CNDTR1 = BUFFER_SIZE;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
-        TX_pulses(8);  // your pulse function
-        delay_ms(5);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
+        TX_pulses(PULSE_COUNT);  //  pulse function
+        delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
 			  
@@ -80,18 +80,18 @@ int main(void)
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,0);
 		  
 		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
-          TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
+        TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
 			
 		  DMA1_CCR1 &= ~(1<<0);
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer3+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 350;
+		  DMA1_CNDTR1 = BUFFER_SIZE;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
-        TX_pulses(8);  // your pulse function
-        delay_ms(5);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
+        TX_pulses(PULSE_COUNT);  //  pulse function
+        delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
 			  
@@ -101,18 +101,18 @@ int main(void)
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,1);
 		  
 		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
-          TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
+        TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
 			
 		  DMA1_CCR1 &= ~(1<<0);
 		  while(DMA1_CCR1 & (1<<0)){}
 		  DMA_CMAR1(DMA1) = (uint32_t)(adc_buffer4+1);      // memory = buffer
 		  DMA_IFCR(DMA1) = 0xF;
-		  DMA1_CNDTR1 = 350;
+		  DMA1_CNDTR1 = BUFFER_SIZE;
 		  DMA1_CCR1 |= 1<<0;
 		  ADC_CR(ADC1) |= 1<<2;
         
-        TX_pulses(8);  // your pulse function
-        delay_ms(5);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
+        TX_pulses(PULSE_COUNT);  //  pulse function
+        delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
 			  
@@ -121,30 +121,30 @@ int main(void)
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer1;
-		  DMA_CNDTR7(DMA1) = 702;
+		  DMA_CNDTR7(DMA1) = ((BUFFER_SIZE+1)*2);
 		  DMA_CCR7(DMA1) |= (1 << 0);
-		  delay_ms(15);
+		  delay_ms(DELAY_BUFFER_TRANSMIT);
 			  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer2;
-		  DMA_CNDTR7(DMA1) = 702;
+		  DMA_CNDTR7(DMA1) = ((BUFFER_SIZE+1)*2);
 		  DMA_CCR7(DMA1) |= (1 << 0);
-		  delay_ms(15);
+		  delay_ms(DELAY_BUFFER_TRANSMIT);
 		  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer3;
-		  DMA_CNDTR7(DMA1) = 702;
+		  DMA_CNDTR7(DMA1) = ((BUFFER_SIZE+1)*2);
 		  DMA_CCR7(DMA1) |= (1 << 0);
-		  delay_ms(15);
+		  delay_ms(DELAY_BUFFER_TRANSMIT);
 		  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
 		  while (DMA_CCR7(DMA1) & (1 << 0));
 		  DMA_CMAR7(DMA1)  = (uint32_t)adc_buffer4;
-		  DMA_CNDTR7(DMA1) = 702;
+		  DMA_CNDTR7(DMA1) = ((BUFFER_SIZE+1)*2);
 		  DMA_CCR7(DMA1) |= (1 << 0);
-		  delay_ms(15);
+		  delay_ms(DELAY_BUFFER_TRANSMIT);
 			  
         GPIO_Toggle(TP1_GPIO_Port, TP1_Pin);
         GPIO_Toggle(LED1_GPIO_Port, LED1_Pin);
@@ -360,7 +360,7 @@ void TIM4_TriggerInit(void)
 
     TIM_CR1(TIM4) = 0;                  // disable timer
     TIM_PSC(TIM4) = 79;                 // 1 MHz tick (80MHz / 80)
-    TIM_ARR(TIM4) = 100;                // 200 us
+    TIM_ARR(TIM4) = DELAY_SILENT_ZONE;                // 200 us
     TIM_EGR(TIM4) |= 1;                 // UG = latch ARR
 	 TIM_SR(TIM4) &= ~1; 					 //needed as writting egr makes update event to rewrite shadow register and thus interrupts will start firring as soon as initialized
     TIM_CR1(TIM4) |= (1 << 3);          // OPM = 1 (one pulse mode)
