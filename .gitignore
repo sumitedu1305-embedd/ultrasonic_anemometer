@@ -1,0 +1,8 @@
+# Keil uVision auto-generated build files
+*.build_log.htm
+*.htm
+*.dep
+
+# User-specific configuration (window layouts, etc.)
+*.uvguix.*
+*.uvoptx
