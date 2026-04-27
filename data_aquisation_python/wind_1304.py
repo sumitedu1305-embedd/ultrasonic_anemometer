@@ -5,6 +5,8 @@ from scipy.signal import butter, filtfilt, correlate
 from collections import deque
 import threading, queue, os, sys
 
+print("\n\n")
+
 # -------- CONFIG --------
 PORT = "COM6"
 BAUD = 921600
@@ -18,7 +20,8 @@ HEADER_EASTOUT  = 0xDD55
 
 PAYLOAD_SAMPLES = 250
 FS              = 1e6
-SENSOR_DISTANCE = 0.210
+SENSOR_DISTANCE = 0.035        # one-way TX → reflector distance (metres)
+EFFECTIVE_DISTANCE = 2 * SENSOR_DISTANCE   # ← ADDED: full TX→reflector→RX path
 SOUND_SPEED     = 343.0
 
 CALIB_DURATION  = 5.0   # seconds to collect lags when calibrating
@@ -133,7 +136,7 @@ gs = fig.add_gridspec(4, 3, left=0.04, right=0.96, top=0.95, bottom=0.04, hspace
 sig_axes = [fig.add_subplot(gs[r, c]) for r in range(4) for c in range(2)]
 ax_compass = fig.add_subplot(gs[:, 2])
 
-LABELS = ['N raw','N filt','S raw','S filt','E raw','E filt','W raw','W filt']
+LABELS = ['S raw','S filt','N raw','N filt','W raw','W filt','E raw','E filt']
 sig_lines = []
 x = np.arange(PAYLOAD_SAMPLES)
 for i, ax in enumerate(sig_axes):
@@ -183,11 +186,11 @@ arrow_tail, = ax_compass.plot([0, 0], [0, -0.30], color=DIM, lw=1.2,
                                linestyle='--', dash_capstyle='round')
 ax_compass.plot(0, 0, 'o', color=FG, ms=4, zorder=5)
 
-spd_txt    = ax_compass.text(0, -1.08, '-- m/s',         ha='center', va='center', fontsize=10, color=RED,  fontfamily='monospace')
-dir_txt    = ax_compass.text(0,  1.25, '--°',             ha='center', va='center', fontsize=8,  color=FG,   fontfamily='monospace')
-lag_txt    = ax_compass.text(0, -1.20, 'N/S: --  E/W: --',ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
-offset_txt = ax_compass.text(0, -1.32, 'offset: 0 / 0',  ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
-calib_txt  = ax_compass.text(0, -1.43, '',                ha='center', va='center', fontsize=7,  color=GRN,  fontfamily='monospace')
+spd_txt    = ax_compass.text(0, -1.08, '-- m/s',          ha='center', va='center', fontsize=10, color=RED,  fontfamily='monospace')
+dir_txt    = ax_compass.text(0,  1.25, '--°',              ha='center', va='center', fontsize=8,  color=FG,   fontfamily='monospace')
+lag_txt    = ax_compass.text(0, -1.20, 'N/S: --  E/W: --', ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
+offset_txt = ax_compass.text(0, -1.32, 'offset: 0 / 0',   ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
+calib_txt  = ax_compass.text(0, -1.43, '',                 ha='center', va='center', fontsize=7,  color=GRN,  fontfamily='monospace')
 ax_compass.text(0, 1.38, 'WIND', ha='center', va='center', fontsize=9, color=DIM,
                 fontfamily='monospace', fontweight='bold')
 
@@ -210,12 +213,12 @@ def on_key(event):
     if event.key in ('c', 'C'):
         with calib_lock:
             if calib_active:
-                return   # already running, ignore
+                return
             calib_active     = True
             calib_start_time = plt.matplotlib.dates.datetime.datetime.now().timestamp()
             calib_lags_ns    = []
             calib_lags_ew    = []
-        print(f"\n[CAL] Calibration started — keep still for {CALIB_DURATION:.0f}s ...")
+        print(f"\n\n ----> CALIBRATING\n [CAL] Calibration started — keep still for {CALIB_DURATION:.0f}s ...")
 
 fig.canvas.mpl_connect('key_press_event', on_key)
 
@@ -251,8 +254,8 @@ def update(frame_num):
             lag += (y0 - y2) / (2*(y0 - 2*y1 + y2) + 1e-8)
         return lag
 
-    raw_lag_ns = get_lag(s1f, s2f)
-    raw_lag_ew = get_lag(s3f, s4f)
+    raw_lag_ns = get_lag(s1f, s2f)   # S-TX vs N-TX received at N-RX and S-RX
+    raw_lag_ew = get_lag(s3f, s4f)   # W-TX vs E-TX received at E-RX and W-RX
 
     # ---- Calibration collection ----
     import time
@@ -267,27 +270,26 @@ def update(frame_num):
                 calib_txt.set_text(f'CALIBRATING... {remaining:.1f}s')
                 calib_txt.set_color(GRN)
             else:
-                # Commit offsets
                 offset_ns = float(np.median(calib_lags_ns))
                 offset_ew = float(np.median(calib_lags_ew))
                 calib_active = False
-                # Clear smoothing buffers — old data had old offsets
                 lag_buffer_ns.clear(); wind_buffer_ns.clear()
                 lag_buffer_ew.clear(); wind_buffer_ew.clear()
                 calib_txt.set_text(f'CAL DONE  ns={offset_ns:+.2f}  ew={offset_ew:+.2f}')
                 calib_txt.set_color(GRN)
-                print(f"[CAL] Done — offset N/S: {offset_ns:+.3f} samples  "
-                      f"E/W: {offset_ew:+.3f} samples")
+                print(f"\n [CAL] Done — offset N/S: {offset_ns:+.3f} samples  "
+                      f"E/W: {offset_ew:+.3f} samples", end='\n\nc')
         else:
-            # Fade the done message after a while (just blank it; simple enough)
             pass
 
-    # ---- Apply offset then compute wind ----
+    # ---- Apply offset ----
     corrected_lag_ns = raw_lag_ns - offset_ns
     corrected_lag_ew = raw_lag_ew - offset_ew
 
-    wind_ns = -(corrected_lag_ns / FS) * (SOUND_SPEED**2 / ( SENSOR_DISTANCE))
-    wind_ew = -(corrected_lag_ew / FS) * (SOUND_SPEED**2 / ( SENSOR_DISTANCE))
+    # ---- Wind calculation (reflector path = 2 × SENSOR_DISTANCE) ----
+    # v = Δt · c² / (2d)   where 2d = EFFECTIVE_DISTANCE = 2 * SENSOR_DISTANCE
+    wind_ns = -(corrected_lag_ns / FS) * (SOUND_SPEED**2 / EFFECTIVE_DISTANCE)
+    wind_ew = (corrected_lag_ew / FS) * (SOUND_SPEED**2 / EFFECTIVE_DISTANCE)
 
     lag_sn  = smooth_median(lag_buffer_ns,  corrected_lag_ns)
     wind_sn = smooth_median(wind_buffer_ns, wind_ns)
@@ -301,7 +303,7 @@ def update(frame_num):
     # ---- Terminal ----
     cal_marker = '[CAL]' if calib_active else f'[off {offset_ns:+.1f}/{offset_ew:+.1f}]'
     sys.stdout.write(
-        f"\r {cal_marker} Wind: {wind_speed:6.2f} m/s | Dir: {direction_deg:6.1f}° "
+        f"\r {cal_marker} Wind: {wind_speed:6.3f} m/s | Dir: {direction_deg:6.3f}° "
         f"{dir_label(direction_deg):<3s} | Lag N/S: {lag_sn:+7.2f} | Lag E/W: {lag_se:+7.2f}   "
     )
     sys.stdout.flush()
@@ -333,12 +335,16 @@ def update(frame_num):
         sig_lines[idx].set_ydata(data)
         sig_axes[idx].set_ylim(-lim, lim)
 
-    return sig_lines + [arrow_line, arrow_head, arrow_tail, speed_circle, spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
+    return sig_lines + [arrow_line, arrow_head, arrow_tail, speed_circle,
+                        spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
 
 
 if __name__ == '__main__':
+    print("=======================================================================================")
     print("Wind Anemometer — press C in the plot window to calibrate (keep sensors still).")
-    print(f"Calibration collects {CALIB_DURATION:.0f}s of lags and stores the median as offset.\n")
+    print(f"Calibration collects {CALIB_DURATION:.0f}s of lags and stores the median as offset.")
+    print("Reflector path = 2 × SENSOR_DISTANCE =", EFFECTIVE_DISTANCE, "m")
+    print("=======================================================================================\n")
 
     reader = threading.Thread(target=serial_reader, args=(PORT, BAUD), daemon=True)
     reader.start()
@@ -349,6 +355,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         pass
     finally:
+        print("\n\n")
         stop_event.set()
         plt.close('all')
         print("\nStopped.")
