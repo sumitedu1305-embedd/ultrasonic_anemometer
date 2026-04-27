@@ -230,12 +230,12 @@
 #define USART_CR3(USARTx)  (*(volatile uint32_t *)(USARTx + 0x08))
 #define USART_GTPR(USARTx) (*(volatile uint32_t *)(USARTx + 0x18))
 	
-#define BUFFER_SIZE 				350
+#define BUFFER_SIZE 				250
 #define PULSE_COUNT 				8
-#define DELAY_SILENT_ZONE 		200
+#define DELAY_SILENT_ZONE 		70
 #define BAUDRATE 					921600
 #define DELAY_BUFFER_TRANSMIT 15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
-#define DELAY_RINGING			5 //should consider time required for sampling too (1ms for sampling RN)
+#define DELAY_RINGING			20 //should consider time required for sampling too (1ms for sampling RN)
 
 void USART2_DMA_TX_Init(void);
 

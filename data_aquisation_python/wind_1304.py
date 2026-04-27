@@ -9,14 +9,14 @@ import threading, queue, os, sys
 PORT = "COM6"
 BAUD = 921600
 
-SILENT_END = 80   # samples; adjust to where echo starts on your earliest channel
+SILENT_END = 60   # samples; adjust to where echo starts on your earliest channel
 
 HEADER_SOUTHOUT = 0xAA55
 HEADER_NORTHOUT = 0xBB55
 HEADER_WESTOUT  = 0xCC55
 HEADER_EASTOUT  = 0xDD55
 
-PAYLOAD_SAMPLES = 350
+PAYLOAD_SAMPLES = 250
 FS              = 1e6
 SENSOR_DISTANCE = 0.210
 SOUND_SPEED     = 343.0

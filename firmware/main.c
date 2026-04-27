@@ -54,10 +54,8 @@ int main(void)
         cnt = TIM_CNT(TIM3);  // should be ~1000
 		  
 		  //----------------------------------------------- NORTH OUT -----------------------------------------------------------------
-			  
 		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,0);
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,1);
-		  
 		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
         TIM_CNT(TIM3) = 0;             // reset TIM3 event counter
 			
@@ -76,7 +74,7 @@ int main(void)
 			  
 		  //----------------------------------------------- WEST OUT -----------------------------------------------------------------
 			 
-		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,1);
+		  GPIO_Set(SWITCH_A_GPIO_Port,SWITCH_A_Pin,1);	
 		  GPIO_Set(SWITCH_B_GPIO_Port,SWITCH_B_Pin,0);
 		  
 		  TIM_CNT(TIM2) = 0;             // reset TIM2 counter
@@ -115,7 +113,7 @@ int main(void)
         delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
 			  
         cnt = TIM_CNT(TIM3);  // should be ~1000
-			  
+		
 		  //----------------------------------------------- SEND BUFFERS -----------------------------------------------------------------
 			  
 		  DMA_CCR7(DMA1) &= ~(1 << 0);
