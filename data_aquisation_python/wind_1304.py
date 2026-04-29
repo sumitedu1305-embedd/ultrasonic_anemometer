@@ -8,6 +8,7 @@ import threading, queue, os, sys
 print("\n\n")
 
 # -------- CONFIG --------
+
 PORT = "COM6"
 BAUD = 921600
 
@@ -80,12 +81,15 @@ def serial_reader(port, baud):
             if not expect_header(HEADER_SOUTHOUT): break
             s1 = read_payload()
             if s1 is None: continue
+            
             if not expect_header(HEADER_NORTHOUT): break
             s2 = read_payload()
             if s2 is None: continue
+            
             if not expect_header(HEADER_WESTOUT): break
             s3 = read_payload()
             if s3 is None: continue
+            
             if not expect_header(HEADER_EASTOUT): break
             s4 = read_payload()
             if s4 is None: continue
@@ -163,7 +167,8 @@ CARDINALS = [('N',0),('NE',45),('E',90),('SE',135), ('S',180),('SW',225),('W',27
 for label, deg in CARDINALS:
     rad = np.radians(deg)
     ax_compass.plot([np.sin(rad)*0.90, np.sin(rad)*1.00],
-                    [np.cos(rad)*0.90, np.cos(rad)*1.00], color=DIM, lw=0.8)
+                    [np.cos(rad)*0.90, np.cos(rad)*1.00], 
+                    color=DIM, lw=0.8)
     is_card = len(label) == 1
     ax_compass.text(np.sin(rad)*1.15, np.cos(rad)*1.15, label,
                     ha='center', va='center',
@@ -182,17 +187,15 @@ ax_compass.add_patch(speed_circle)
 
 arrow_line, = ax_compass.plot([0, 0], [0,  0.65], color=RED, lw=2.5, solid_capstyle='round')
 arrow_head, = ax_compass.plot([0], [0.65], marker='^', ms=8, color=RED, markeredgewidth=0)
-arrow_tail, = ax_compass.plot([0, 0], [0, -0.30], color=DIM, lw=1.2,
-                               linestyle='--', dash_capstyle='round')
+arrow_tail, = ax_compass.plot([0, 0], [0, -0.30], color=DIM, lw=1.2, linestyle='--', dash_capstyle='round')
 ax_compass.plot(0, 0, 'o', color=FG, ms=4, zorder=5)
 
-spd_txt    = ax_compass.text(0, -1.08, '-- m/s',          ha='center', va='center', fontsize=10, color=RED,  fontfamily='monospace')
+spd_txt    = ax_compass.text(0, -1.08, '-- m/s',           ha='center', va='center', fontsize=10, color=RED,  fontfamily='monospace')
 dir_txt    = ax_compass.text(0,  1.25, '--°',              ha='center', va='center', fontsize=8,  color=FG,   fontfamily='monospace')
 lag_txt    = ax_compass.text(0, -1.20, 'N/S: --  E/W: --', ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
-offset_txt = ax_compass.text(0, -1.32, 'offset: 0 / 0',   ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
+offset_txt = ax_compass.text(0, -1.32, 'offset: 0 / 0',    ha='center', va='center', fontsize=6.5,color=DIM,  fontfamily='monospace')
 calib_txt  = ax_compass.text(0, -1.43, '',                 ha='center', va='center', fontsize=7,  color=GRN,  fontfamily='monospace')
-ax_compass.text(0, 1.38, 'WIND', ha='center', va='center', fontsize=9, color=DIM,
-                fontfamily='monospace', fontweight='bold')
+ax_compass.text(0, 1.38, 'WIND', ha='center', va='center', fontsize=9, color=DIM, fontfamily='monospace', fontweight='bold')
 
 # -------- Helpers --------
 def dir_label(deg):
