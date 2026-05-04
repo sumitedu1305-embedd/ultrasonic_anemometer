@@ -1,8 +1,33 @@
-# Keil uVision auto-generated build files
-*.build_log.htm
-*.htm
-*.dep
+# Python virtual environment
+.venv/
+venv/
+env/
 
-# User-specific configuration (window layouts, etc.)
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Keil MDK / uVision build artifacts
+firmware/DebugConfig/
+firmware/Listings/
+firmware/Objects/
+firmware/RTE/
 *.uvguix.*
 *.uvoptx
+*.uvgui
+
+# Event recorder
+*.scvd
+
+# Keep these (project essentials)
+# ✅ main.c
+# ✅ main.h
+# ✅ *.uvprojx
+# ✅ wind_1304.py
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
