@@ -52,7 +52,7 @@ int main(void)
         
         TX_pulses(PULSE_COUNT);     //  pulse function
         delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
-			  
+		
         cnt = TIM_CNT(TIM3);  // should be ~1000
 		  
 		//----------------------------------------------- NORTH OUT -----------------------------------------------------------------
@@ -539,8 +539,4 @@ void TIM1_UP_TIM16_IRQHandler()
         TIM_SR(TIM4) &= ~1;         // clear any pending update flag
         TIM_CR1(TIM4) |= 1;         // start TIM4
     }
-}
-void TIM4_IRQHandler()
-{
-	TIM_SR(TIM4) &= ~1;
 }

@@ -222,7 +222,7 @@
         } while (0)
 
 		  
-#define PWR_DRV0_GPIO_Port   	  GPIOA
+#define PWR_DRV0_GPIO_Port   	GPIOA
 #define ECHO_OUT_GPIO_Port      GPIOA
 #define LED2_GPIO_Port          GPIOC
 #define LED1_GPIO_Port          GPIOC
