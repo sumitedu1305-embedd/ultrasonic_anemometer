@@ -91,6 +91,8 @@ int main(void)
         DMA_CNDTR(DMA1, DMA_CHANNEL_1)      = BUFFER_SIZE;
         DMA_CCR(DMA1, DMA_CHANNEL_1)        |= 1 << 0;
 
+        ADC_CR(ADC1) |= 1 << 2;
+
         TX_pulses(PULSE_COUNT);     //  pulse function
         delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
 			  
@@ -108,6 +110,8 @@ int main(void)
         DMA_IFCR(DMA1)                      = 0xF;
         DMA_CNDTR(DMA1, DMA_CHANNEL_1)      = BUFFER_SIZE;
         DMA_CCR(DMA1, DMA_CHANNEL_1)        |= 1 << 0;
+
+        ADC_CR(ADC1) |= 1 << 2;
 
         TX_pulses(PULSE_COUNT);     //  pulse function
         delay_ms(DELAY_RINGING);    // enough time for 1000 events at 1 MHz (~1 ms needed, extra safe)
@@ -180,7 +184,7 @@ void USART2_DMA_TX_Init(void)
 
     DMA_CPAR(DMA1,DMA_CHANNEL_7)    = (uint32_t)&USART_TDR(USART2); // Peripheral (TX reg)
     DMA_CMAR(DMA1,DMA_CHANNEL_7)    = (uint32_t)adc_buffer1;        // Memory
-    DMA_CNDTR(DMA1,DMA_CHANNEL_7)   = 2002;                 		// Size
+    DMA_CNDTR(DMA1,DMA_CHANNEL_7)   = 0;                 		// Size
     DMA_CSELR(DMA1) &= ~(0xF << (6 * 4));    		// Clear CH7 bits
     DMA_CSELR(DMA1) |=  (0x2 << (6 * 4));    		// Set to 0010
     DMA_CCR(DMA1,DMA_CHANNEL_7)     |= (1 << 7);    // MINC (memory increment)
