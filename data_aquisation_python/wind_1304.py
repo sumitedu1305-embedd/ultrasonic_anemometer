@@ -36,7 +36,7 @@ FS                 = 1e6          # Sampling frequency (Hz)
 SILENT_END         = 60           # Samples before echo arrives (for DC removal)
 
 # Physical geometry
-SENSOR_DISTANCE    = 0.035        # One-way TX → reflector distance (metres)
+SENSOR_DISTANCE    = 0.04272294        # One-way TX → reflector distance (metres)
 EFFECTIVE_DISTANCE = 2 * SENSOR_DISTANCE  # Full TX → reflector → RX path (metres)
 SOUND_SPEED        = 343.0        # m/s at ~20°C
 

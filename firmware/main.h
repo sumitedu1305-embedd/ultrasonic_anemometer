@@ -179,6 +179,9 @@
 #define BUFFER_SIZE 		250
 #define PULSE_COUNT 		8
 #define DELAY_SILENT_ZONE 	80
+
+
+
 #define BAUDRATE 		921600
 #define DELAY_BUFFER_TRANSMIT   15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
 #define DELAY_RINGING		20 //should consider time required for sampling too (1ms for sampling RN)
