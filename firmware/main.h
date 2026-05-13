@@ -178,10 +178,7 @@
 
 #define BUFFER_SIZE 		250
 #define PULSE_COUNT 		8
-#define DELAY_SILENT_ZONE 	80
-
-
-
+#define DELAY_SILENT_ZONE 	50  
 #define BAUDRATE 		921600
 #define DELAY_BUFFER_TRANSMIT   15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
 #define DELAY_RINGING		20 //should consider time required for sampling too (1ms for sampling RN)
@@ -224,7 +221,6 @@
                 GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
         } while (0)
 
-		  
 #define PWR_DRV0_GPIO_Port   	GPIOA
 #define ECHO_OUT_GPIO_Port      GPIOA
 #define LED2_GPIO_Port          GPIOC

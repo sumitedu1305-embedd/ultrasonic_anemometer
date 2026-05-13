@@ -57,8 +57,7 @@ int main(void)
 
             // Stop DMA
             DMA_CCR(DMA1, DMA_CHANNEL_1) &= ~(1 << 0);
-            while (DMA_CCR(DMA1, DMA_CHANNEL_1) & 1)
-                ;
+            while (DMA_CCR(DMA1, DMA_CHANNEL_1) & 1);
 
             // Configure DMA
             DMA_CMAR(DMA1, DMA_CHANNEL_1) = (uint32_t)(buffers[i] + 1);
@@ -81,8 +80,7 @@ int main(void)
         for (int i = 0; i < 4; i++)
         {
             DMA_CCR(DMA1, DMA_CHANNEL_7) &= ~(1 << 0);
-            while (DMA_CCR(DMA1, DMA_CHANNEL_7) & 1)
-                ;
+            while (DMA_CCR(DMA1, DMA_CHANNEL_7) & 1);
 
             DMA_CMAR(DMA1, DMA_CHANNEL_7) = (uint32_t)buffers[i];
             DMA_CNDTR(DMA1, DMA_CHANNEL_7) = (BUFFER_SIZE + 1) * 2;
@@ -98,6 +96,7 @@ int main(void)
         GPIO_Toggle(LED3_GPIO_Port, LED3_Pin);
     }
 }
+
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ USART2                                                                     │
 //   │ config      -> 921600 baud, no oversampling, tx DMA on                     │
@@ -138,6 +137,7 @@ void USART2_DMA_TX_Init(void)
 
     DMA_CCR(DMA1, DMA_CHANNEL_7) |= 1;
 }
+
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ ADC1                                                                       │
 //   │ config      -> DMA enabled, min sampling cycle, slave for TIM2             │
