@@ -1,7 +1,7 @@
 # Python virtual environment
 .venv/
 venv/
-env/
+env/ 
 
 # Python cache
 __pycache__/
@@ -22,12 +22,14 @@ firmware/RTE/
 *.scvd
 
 # Keep these (project essentials)
-# ✅ main.c
-# ✅ main.h
-# ✅ *.uvprojx
-# ✅ wind_1304.py
+#  main.c
+#  main.h
+#  *.uvprojx
+#  wind_1304.py
 
 # OS junk
 .DS_Store
 Thumbs.db
 desktop.ini
+
+.vscode 
