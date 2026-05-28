@@ -27,6 +27,8 @@ firmware/RTE/
 # ✅ *.uvprojx
 # ✅ wind_1304.py
 
+.vscode
+
 # OS junk
 .DS_Store
 Thumbs.db
