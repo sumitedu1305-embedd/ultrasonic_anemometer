@@ -11,27 +11,29 @@
 
 #define ADC1            0x50040000UL
 
+#define ADC2            0x50040100UL
+
 #define USART2          0x40004400UL
 
 #define DMA1            0x40020000UL
 
 #define PWR_BASE        0x40007000UL
 
-#define GPIOA   0x48000000UL
-#define GPIOB   0x48000400UL
-#define GPIOC   0x48000800UL
-#define GPIOD   0x48000C00UL
-#define GPIOE   0x48001000UL
-#define GPIOF   0x48001400UL
-#define GPIOG   0x48001800UL
-#define GPIOH   0x48001C00UL
+#define GPIOA           0x48000000UL
+#define GPIOB           0x48000400UL
+#define GPIOC           0x48000800UL
+#define GPIOD           0x48000C00UL
+#define GPIOE           0x48001000UL
+#define GPIOF           0x48001400UL
+#define GPIOG           0x48001800UL
+#define GPIOH           0x48001C00UL
 
-#define TIM3    0x40000400UL
-#define TIM1    0x40012C00UL
-#define TIM15   0x40014000UL
-#define TIM16   0x40014400UL
-#define TIM2    0x40000000UL
-#define TIM4    0x40000800UL
+#define TIM3            0x40000400UL
+#define TIM1            0x40012C00UL
+#define TIM15           0x40014000UL
+#define TIM16           0x40014400UL
+#define TIM2            0x40000000UL
+#define TIM4            0x40000800UL
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ GPIO REG OFFSETS                                                           │
@@ -265,7 +267,12 @@ uint16_t adc_buffer3[BUFFER_SIZE + 1];
 uint16_t adc_buffer4[BUFFER_SIZE + 1];
 
 // debug var for frequency estimations
-uint32_t cnt = 0;
+uint32_t cnt;
+
+// temperature sensor default value
+float32_t current_temp_c;
+volatile uint16_t raw_temp_adc;
+float32_t sound_speed_wrt_temp;
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ VARIABLE DECLARATION - SIGNAL PROCESSING                                   │
@@ -283,15 +290,18 @@ static arm_biquad_casd_df1_inst_f32 bpf_bwd;
 // correlation buffer to store the cross correlation of two signal
 static float32_t corr_buf[CORR_SIZE];
 
-static float32_t offset_ns = 0.0f;
-static float32_t offset_ew = 0.0f;
-static float32_t smooth_ns = 0.0f;
-static float32_t smooth_ew = 0.0f;
-static float32_t last_dir  = 0.0f;
+static float32_t offset_ns;
+static float32_t offset_ew;
+static float32_t smooth_ns;
+static float32_t smooth_ew;
+static float32_t last_dir ;
 
-static float32_t ring_ns[RING_LEN], ring_ew[RING_LEN];
-static uint8_t   ring_head_ns = 0,  ring_head_ew = 0;
-static uint8_t   ring_cnt_ns  = 0,  ring_cnt_ew  = 0;
+static float32_t ring_ns[RING_LEN];
+static float32_t ring_ew[RING_LEN];
+static uint8_t   ring_head_ns;
+static uint8_t   ring_head_ew;
+static uint8_t   ring_cnt_ns ;
+static uint8_t   ring_cnt_ew ;
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ FUNCTION DECLARATIONS - FIRMWARE                                           │
@@ -303,6 +313,8 @@ void TIM3_RateCheckADC_EVTCheckTIM2();
 
 void ADC1_DMA_TIM2_Config(void);
 void ADC1_RateCheck(void);
+
+void ADC2_TemperatureInit(void);
 
 void TIM2_SlaveGateMode_TIM1(void);
 

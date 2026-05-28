@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 from scipy.signal import butter, correlate, filtfilt
+from scipy.signal import hilbert
 
 print("\n\n")
 
@@ -132,6 +133,7 @@ def smooth_median(buf, val, threshold=0.7):
     return float(np.median(clean))
 
 def get_lag(a, b):
+    
     """Calculates fine-grained phase delta via cross-correlation and parabolic fit."""
     # Standardize the signals to prevent amplitude differences from messing up timing
     na = a / (a.std() + 1e-8)
