@@ -5,35 +5,18 @@
 //   └────────────────────────────────────────────────────────────────────────────┘
 
 // buffers
-adc_buffer1[BUFFER_SIZE + 1] = {[0] = 0xAA55};
-adc_buffer2[BUFFER_SIZE + 1] = {[0] = 0xBB55};
-adc_buffer3[BUFFER_SIZE + 1] = {[0] = 0xCC55};
-adc_buffer4[BUFFER_SIZE + 1] = {[0] = 0xDD55};
+uint16_t adc_buffer1[BUFFER_SIZE + 1] = {[0] = 0xAA55};
+uint16_t adc_buffer2[BUFFER_SIZE + 1] = {[0] = 0xBB55};
+uint16_t adc_buffer3[BUFFER_SIZE + 1] = {[0] = 0xCC55};
+uint16_t adc_buffer4[BUFFER_SIZE + 1] = {[0] = 0xDD55};
 
 // debug variable for frequency estimation
-cnt = 0;
-
-// coefficients as per the python bandapss filter coefficients from python code
-bpf_coeffs[order * 5] = 
-{
-    // CMSIS order per section: {b0, b1, b2, -a1, -a2}
-    // generated as per the python script running right now 
-    /* Section 0 */  0.0000132937f,  0.0000265875f,  0.0000132937f,  1.8120729699f, -0.8799498227f,
-    /* Section 1 */  1.0000000000f,  2.0000000000f,  1.0000000000f,  1.8547735362f, -0.9005598403f,
-    /* Section 2 */  1.0000000000f, -2.0000000000f,  1.0000000000f,  1.8509609152f, -0.9427348977f,
-    /* Section 3 */  1.0000000000f, -2.0000000000f,  1.0000000000f,  1.9275919862f, -0.9636478029f,
-};
-
-// state buffer: 2 values per section × 4 sections
-float32_t bpf_state_fwd[order * 2];
-float32_t bpf_state_bwd[order * 2];
-arm_biquad_casd_df1_inst_f32 bpf_fwd;
-arm_biquad_casd_df1_inst_f32 bpf_bwd;
+uint32_t cnt = 0;
 
 // temperature definition
-current_temp_c = 25.0;
-raw_temp_adc = 0;
-sound_speed_wrt_temp = 0;
+float current_temp_c = 25.0;
+volatile uint16_t raw_temp_adc = 0;
+float sound_speed_wrt_temp = 0;
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ MAIN                                                                       │
@@ -51,6 +34,7 @@ int main(void)
     TIM3_RateCheckADC_EVTCheckTIM2();
     ADC1_DMA_TIM2_Config();
     USART2_DMA_TX_Init();
+    ADC2_TemperatureInit();
 
     delay_ms(10);
 
@@ -104,6 +88,8 @@ int main(void)
             cnt = TIM_CNT(TIM3);
         }
 
+        Process_Temperature_Math();
+
         // -------- SEND ALL BUFFERS --------
         for (int i = 0; i < 4; i++)
         {
@@ -118,6 +104,19 @@ int main(void)
             delay_ms(DELAY_BUFFER_TRANSMIT);
         }
 
+        // send the temperature readings over the uart
+        static uint16_t temp_packet[3];
+        temp_packet[0] = 0xEE55;                          // header marker (consistent with ADC buffers)
+        memcpy(&temp_packet[1], &sound_speed_wrt_temp, sizeof(float));  // 4 bytes = 2 x uint16_t
+
+        DMA_CCR(DMA1, DMA_CHANNEL_7) &= ~(1 << 0);
+        while (DMA_CCR(DMA1, DMA_CHANNEL_7) & 1);
+
+        DMA_CMAR(DMA1, DMA_CHANNEL_7) = (uint32_t)temp_packet;
+        DMA_CNDTR(DMA1, DMA_CHANNEL_7) = sizeof(temp_packet);  // 6 bytes
+
+        DMA_CCR(DMA1, DMA_CHANNEL_7) |= 1;
+        
         GPIO_Toggle(TP1_GPIO_Port, TP1_Pin);
         GPIO_Toggle(LED1_GPIO_Port, LED1_Pin);
         GPIO_Toggle(LED2_GPIO_Port, LED2_Pin);
@@ -139,6 +138,7 @@ void ADC2_TemperatureInit(void)
     // PA1 as Analog Mode
     GPIO_MODER(GPIOA) |= (3 << (1 * 2));    // Set PA1 to 11 (Analog)
     GPIO_PUPDR(GPIOA) &= ~(3 << (1 * 2));   // No pull-up/pull-down
+    GPIO_ASCR(GPIOA)  |= (1 << 1);
 
     // dma config to auto store adc value into variable
     DMA_CCR(DMA1, DMA_CHANNEL_2)    = 0;
@@ -169,8 +169,7 @@ void ADC2_TemperatureInit(void)
 }
 void Process_Temperature_Math(void) 
 {
-    float32_t voltage = ((float32_t)raw_temp_adc / 4095.0f) * 3.3f;
-    current_temp_c = (voltage - 0.5f) * 100.0f;
+    current_temp_c = 28.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
     sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);
 }
 
@@ -635,140 +634,4 @@ void TIM1_UP_TIM16_IRQHandler()
         TIM_SR(TIM4) &= ~1;  // clear any pending update flag
         TIM_CR1(TIM4) |= 1;  // start TIM4
     }
-}
-
-//   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ SIGNAL PROCESSING                                                          │
-//   └────────────────────────────────────────────────────────────────────────────┘
-void RemoveDCOffset(uint16_t *arr, float32_t *out)
-{
-    arm_q15_to_float((q15_t *)(arr), out, BUFFER_SIZE);
-    float32_t mean;
-    arm_mean_f32(out, BUFFER_SIZE, &mean);
-    arm_offset_f32(out, -mean, out, BUFFER_SIZE);
-}
-void HannWindowInit(float32_t *window)
-{
-    for(int i = 0; i < BUFFER_SIZE; i++)
-        window[i] = 0.5f * (1.0f - cosf(2.0f * PI * i / (BUFFER_SIZE - 1)));
-}
-void ApplyHannWindow(float32_t *arr, float32_t *window)
-{
-    arm_mult_f32(arr, window, arr, BUFFER_SIZE);
-}
-void BandpassFilterInit(void)
-{
-    arm_biquad_cascade_df1_init_f32(&bpf_fwd, order, bpf_coeffs, bpf_state_fwd);
-    arm_biquad_cascade_df1_init_f32(&bpf_bwd, order, bpf_coeffs, bpf_state_bwd);
-}
-static void reverse_f32(float32_t *arr, uint32_t len)
-{
-    uint32_t i = 0, j = len - 1;
-    while (i < j) {
-        float32_t tmp = arr[i];
-        arr[i++] = arr[j];
-        arr[j--] = tmp;
-    }
-}
-void BandpassFiltFilt(float32_t *arr)
-{
-    memset(bpf_state_fwd, 0, sizeof(bpf_state_fwd));
-    arm_biquad_cascade_df1_f32(&bpf_fwd, arr, arr, BUFFER_SIZE);
-
-    // --- backward pass ---
-    reverse_f32(arr, BUFFER_SIZE);
-    memset(bpf_state_bwd, 0, sizeof(bpf_state_bwd));
-    arm_biquad_cascade_df1_f32(&bpf_bwd, arr, arr, BUFFER_SIZE);
-    reverse_f32(arr, BUFFER_SIZE);
-}
-float32_t GetLag(float32_t *a, float32_t *b)
-{
-    // normalize both by RMS
-    float32_t rms_a, rms_b;
-    arm_rms_f32(a, BUFFER_SIZE, &rms_a);
-    arm_rms_f32(b, BUFFER_SIZE, &rms_b);
-
-    float32_t norm_a[BUFFER_SIZE], norm_b[BUFFER_SIZE];
-    arm_scale_f32(a, 1.0f / (rms_a + 1e-8f), norm_a, BUFFER_SIZE);
-    arm_scale_f32(b, 1.0f / (rms_b + 1e-8f), norm_b, BUFFER_SIZE);
-
-    // cross correlate
-    arm_correlate_f32(norm_a, BUFFER_SIZE, norm_b, BUFFER_SIZE, corr_buf);
-
-    // find peak
-    float32_t peak_val;
-    uint32_t  peak_idx;
-    arm_max_f32(corr_buf, CORR_SIZE, &peak_val, &peak_idx);
-
-    // fractional lag via parabolic interpolation
-    float32_t lag = (float32_t)peak_idx - (float32_t)(BUFFER_SIZE - 1);
-    if (peak_idx > 0 && peak_idx < CORR_SIZE - 1)
-    {
-        float32_t y0 = corr_buf[peak_idx - 1];
-        float32_t y1 = corr_buf[peak_idx];
-        float32_t y2 = corr_buf[peak_idx + 1];
-        float32_t denom = 2.0f * (y0 - 2.0f * y1 + y2);
-        if (fabsf(denom) > 1e-8f)
-            lag += (y0 - y2) / denom;
-    }
-
-    return lag;  // positive = a leads b
-}
-static void ring_push(float32_t *ring, uint8_t *head, uint8_t *cnt, float32_t val)
-{
-    ring[*head] = val;
-    *head = (*head + 1) % RING_LEN;
-    if (*cnt < RING_LEN) (*cnt)++;
-}
-static float32_t ring_std(float32_t *ring, uint8_t cnt)
-{
-    if (cnt < 2) return 999.0f;
-    float32_t result;
-    arm_std_f32(ring, cnt, &result);
-    return result;
-}
-void CalculateWind(float32_t raw_lag_ns, float32_t raw_lag_ew, float32_t *out_speed,  float32_t *out_dir)
-{
-    // remove calibration offset
-    float32_t clag_ns = raw_lag_ns - offset_ns;
-    float32_t clag_ew = raw_lag_ew - offset_ew;
-
-    // asymmetry gain
-    clag_ns *= (clag_ns >= 0.0f) ? POS_SCALE_NS : NEG_SCALE_NS;
-    clag_ew *= (clag_ew >= 0.0f) ? POS_SCALE_EW : NEG_SCALE_EW;
-
-    // wind components
-    float32_t k = (SOUND_SPEED * SOUND_SPEED) / (FS * SENSOR_DIST);
-    float32_t wind_ns = -clag_ns * k;
-    float32_t wind_ew =  clag_ew * k;
-
-    // temporary speed for drift check
-    float32_t tmp_speed;
-    arm_sqrt_f32(wind_ns * wind_ns + wind_ew * wind_ew, &tmp_speed);
-
-    // push into ring buffers
-    ring_push(ring_ns, &ring_head_ns, &ring_cnt_ns, clag_ns);
-    ring_push(ring_ew, &ring_head_ew, &ring_cnt_ew, clag_ew);
-
-    // slow auto drift correction at near zero wind
-    uint8_t stable_ns = (ring_cnt_ns > 5) && (ring_std(ring_ns, ring_cnt_ns) < LAG_STABLE_TH);
-    uint8_t stable_ew = (ring_cnt_ew > 5) && (ring_std(ring_ew, ring_cnt_ew) < LAG_STABLE_TH);
-    if (tmp_speed < ZERO_WIND_TH && stable_ns && stable_ew)
-    {
-        offset_ns = (1.0f - OFFSET_ALPHA) * offset_ns + OFFSET_ALPHA * raw_lag_ns;
-        offset_ew = (1.0f - OFFSET_ALPHA) * offset_ew + OFFSET_ALPHA * raw_lag_ew;
-    }
-
-    // direction vector EMA smoothing
-    smooth_ns = (1.0f - DIR_ALPHA) * smooth_ns + DIR_ALPHA * wind_ns;
-    smooth_ew = (1.0f - DIR_ALPHA) * smooth_ew + DIR_ALPHA * wind_ew;
-    arm_sqrt_f32(smooth_ns * smooth_ns + smooth_ew * smooth_ew, out_speed);
-    
-    // direction — only update if enough magnitude
-    if (*out_speed > MIN_DIR_SPEED)
-    {
-        float32_t deg = atan2f(smooth_ew, smooth_ns) * (180.0f / PI);
-        last_dir  = fmodf(deg + 360.0f, 360.0f);
-    }
-    *out_dir = last_dir;
 }

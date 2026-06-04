@@ -1,5 +1,5 @@
 #include "stdint.h"
-#include "arm_math.h"
+#include "string.h"
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ BASE ADDRESSES                                                             │
@@ -239,22 +239,6 @@
 #define PWR_ON_GPIO_Port        GPIOB
 #define SWITCH_B_GPIO_Port      GPIOA
 
-// specific to DSP
-#define order           4
-#define CORR_SIZE       ((2 * BUFFER_SIZE) - 1)
-#define SOUND_SPEED     343.0f
-#define SENSOR_DIST     0.210f
-#define FS              1000000.0f
-#define POS_SCALE_NS    1.00f
-#define NEG_SCALE_NS    0.87f
-#define POS_SCALE_EW    1.00f
-#define NEG_SCALE_EW    0.91f
-#define DIR_ALPHA       0.10f
-#define MIN_DIR_SPEED   0.15f
-#define OFFSET_ALPHA    0.002f
-#define ZERO_WIND_TH    0.35f
-#define LAG_STABLE_TH   0.8f
-#define RING_LEN        30
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ VARIABLE DECLARATION - FIRMWARE                                            │
@@ -270,38 +254,9 @@ uint16_t adc_buffer4[BUFFER_SIZE + 1];
 uint32_t cnt;
 
 // temperature sensor default value
-float32_t current_temp_c;
+float current_temp_c;
 volatile uint16_t raw_temp_adc;
-float32_t sound_speed_wrt_temp;
-
-//   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ VARIABLE DECLARATION - SIGNAL PROCESSING                                   │
-//   └────────────────────────────────────────────────────────────────────────────┘
-
-// coefficients as per the python bandapss filter coefficients from python code
-static float32_t bpf_coeffs[order * 5];
-
-// state buffer: 2 values per section × 4 sections
-static float32_t bpf_state_fwd[order * 2];
-static float32_t bpf_state_bwd[order * 2];
-static arm_biquad_casd_df1_inst_f32 bpf_fwd;
-static arm_biquad_casd_df1_inst_f32 bpf_bwd;
-
-// correlation buffer to store the cross correlation of two signal
-static float32_t corr_buf[CORR_SIZE];
-
-static float32_t offset_ns;
-static float32_t offset_ew;
-static float32_t smooth_ns;
-static float32_t smooth_ew;
-static float32_t last_dir ;
-
-static float32_t ring_ns[RING_LEN];
-static float32_t ring_ew[RING_LEN];
-static uint8_t   ring_head_ns;
-static uint8_t   ring_head_ew;
-static uint8_t   ring_cnt_ns ;
-static uint8_t   ring_cnt_ew ;
+float sound_speed_wrt_temp;
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ FUNCTION DECLARATIONS - FIRMWARE                                           │
@@ -315,6 +270,7 @@ void ADC1_DMA_TIM2_Config(void);
 void ADC1_RateCheck(void);
 
 void ADC2_TemperatureInit(void);
+void Process_Temperature_Math(void);
 
 void TIM2_SlaveGateMode_TIM1(void);
 
@@ -339,19 +295,3 @@ void RCC_Init();
 void CheckHardware();
 
 void SomethingsWrong();
-
-//   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ FUNCTION DECLARATION - SIGNAL PROCESSING                                   │
-//   └────────────────────────────────────────────────────────────────────────────┘
-
-void RemoveDCOffset(uint16_t *arr, float32_t *out);
-void HannWindowInit(float32_t *window);
-void ApplyHannWindow(float32_t *arr, float32_t *window);
-void BandpassFilterInit(void);
-static void reverse_f32(float32_t *arr, uint32_t len);
-void BandpassFiltFilt(float32_t *arr);
-float32_t GetLag(float32_t *a, float32_t *b);
-void UART_SendSpeedDirection();
-void CalculateWind(float32_t raw_lag_ns, float32_t raw_lag_ew, float32_t *out_speed,  float32_t *out_dir);
-static float32_t ring_std(float32_t *ring, uint8_t cnt);
-static void ring_push(float32_t *ring, uint8_t *head, uint8_t *cnt, float32_t val);
