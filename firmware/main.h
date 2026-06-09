@@ -1,4 +1,5 @@
 #include "stdint.h"
+#include "string.h"
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ BASE ADDRESSES                                                             │
@@ -9,6 +10,8 @@
 #define SYSCFG		0x40010000UL
 
 #define ADC1            0x50040000UL
+
+#define ADC2            0x50040100UL
 
 #define USART2		0x40004400UL
 
@@ -176,9 +179,9 @@
 //   │ PERSONAL DEFINED MACROS                                                    │
 //   └────────────────────────────────────────────────────────────────────────────┘
 
-#define BUFFER_SIZE 		250
+#define BUFFER_SIZE 		275
 #define PULSE_COUNT 		8
-#define DELAY_SILENT_ZONE 	50  
+#define DELAY_SILENT_ZONE 	25  
 #define BAUDRATE 		921600
 #define DELAY_BUFFER_TRANSMIT   15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
 #define DELAY_RINGING		20 //should consider time required for sampling too (1ms for sampling RN)
@@ -234,6 +237,24 @@
 #define SWITCH_B_GPIO_Port      GPIOA
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
+//   │ VARIABLE DECLARATION - FIRMWARE                                            │
+//   └────────────────────────────────────────────────────────────────────────────┘
+
+// Buffers
+uint16_t adc_buffer1[BUFFER_SIZE + 1];
+uint16_t adc_buffer2[BUFFER_SIZE + 1];
+uint16_t adc_buffer3[BUFFER_SIZE + 1];
+uint16_t adc_buffer4[BUFFER_SIZE + 1];
+
+// debug var for frequency estimations
+uint32_t cnt;
+
+// temperature sensor default value
+float current_temp_c;
+volatile uint16_t raw_temp_adc;
+float sound_speed_wrt_temp;
+
+//   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ FUNCTION DECLARATIONS                                                      │
 //   └────────────────────────────────────────────────────────────────────────────┘
 
@@ -243,6 +264,9 @@ void TIM3_RateCheckADC_EVTCheckTIM2();
 
 void ADC1_DMA_TIM2_Config(void);
 void ADC1_RateCheck(void);
+
+void ADC2_TemperatureInit(void);
+void Process_Temperature_Math(void);
 
 void TIM2_SlaveGateMode_TIM1(void);
 

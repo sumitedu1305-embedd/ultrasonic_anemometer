@@ -21,7 +21,7 @@ print("\n\n")
 #   │ CONFIGURATION                                                              │
 #   └────────────────────────────────────────────────────────────────────────────┘
 
-PORT = "COM6"
+PORT = sys.argv[1] if len(sys.argv) > 1 else "COM6"
 BAUD = 921600
 
 # Frame headers (little-endian 2-byte magic numbers per channel)
@@ -31,20 +31,19 @@ HEADER_WESTOUT  = 0xCC55
 HEADER_EASTOUT  = 0xDD55
 
 # Signal parameters
-PAYLOAD_SAMPLES    = 250          # ADC samples per frame
+PAYLOAD_SAMPLES    = 275          # ADC samples per frame
 FS                 = 1e6          # Sampling frequency (Hz)
 SILENT_END         = 60           # Samples before echo arrives (for DC removal)
 
 # Physical geometry
-SENSOR_DISTANCE    = 0.04272294        # One-way TX → reflector distance (metres)
+SENSOR_DISTANCE = 0.04272294
 EFFECTIVE_DISTANCE = 2 * SENSOR_DISTANCE  # Full TX → reflector → RX path (metres)
 SOUND_SPEED        = 343.0        # m/s at ~20°C
 
 # Calibration
 CALIB_DURATION     = 5.0          # Seconds to collect lags during calibration
 
-MAX_DISPLAY_SPEED  = 25.0         # m/s — clamps compass speed-circle radius
-
+MAX_DISPLAY_SPEED  = 10.0         # m/s — clamps compass speed-circle radius
 
 #   ┌────────────────────────────────────────────────────────────────────────────┐
 #   │ SHARED STATE                                                               │
@@ -68,6 +67,12 @@ calib_lags_ew    = []
 offset_ns        = 0.0   # Lag offset in samples — subtracted before wind calc
 offset_ew        = 0.0
 
+# Vector smoothing & direction hold (ported from main)
+smooth_ns          = 0.0
+smooth_ew          = 0.0
+DIR_VECTOR_ALPHA   = 0.1    # EMA factor for wind vector components
+MIN_DIR_SPEED      = 0.15   # m/s — below this, freeze arrow direction
+last_direction_deg = 0.0
 
 #   ┌────────────────────────────────────────────────────────────────────────────┐
 #   │ SIGNAL PREPROCESSING                                                       │
@@ -94,7 +99,7 @@ def bandpass_filter(data, low_cut, high_cut, fs, order=4):
     return filtfilt(b, a, data)
 
 
-# pre-computed Hanning window (applied once per frame)
+# Pre-computed Hanning window (applied once per frame)
 _hanning_window = np.hanning(PAYLOAD_SAMPLES)
 
 
@@ -132,6 +137,7 @@ def get_lag(signal_a, signal_b):
 def smooth_median(buffer, new_value, outlier_threshold=2.0):
     """
     Append new_value to buffer, then return the median of values within
+    outlier_threshold of the median (resistant to spikes).
     """
     buffer.append(new_value)
     median  = np.median(buffer)
@@ -155,10 +161,7 @@ def serial_reader(port, baud):
         stop_event.set()
         return
 
-    # ---- Low-level helpers ------------------------------------------------
-
     def read_exact(n_bytes):
-        """Block until exactly n_bytes are received."""
         buf = b''
         while len(buf) < n_bytes and not stop_event.is_set():
             chunk = ser.read(n_bytes - len(buf))
@@ -167,7 +170,6 @@ def serial_reader(port, baud):
         return buf
 
     def expect_header(expected_header):
-        """Scan the byte stream until the expected 2-byte magic word is found."""
         while not stop_event.is_set():
             byte1 = ser.read(1)
             if not byte1:
@@ -180,7 +182,6 @@ def serial_reader(port, baud):
         return False
 
     def read_payload():
-        """Read one payload of PAYLOAD_SAMPLES uint16 values."""
         raw = read_exact(PAYLOAD_SAMPLES * 2)
         if len(raw) != PAYLOAD_SAMPLES * 2:
             return None
@@ -189,11 +190,8 @@ def serial_reader(port, baud):
             dtype=np.float32
         )
 
-    # ---- Main read loop ---------------------------------------------------
-
     while not stop_event.is_set():
         try:
-            # Each iteration reads one complete 4-channel frame
             if not expect_header(HEADER_SOUTHOUT): break
             south = read_payload()
             if south is None: continue
@@ -210,7 +208,6 @@ def serial_reader(port, baud):
             east = read_payload()
             if east is None: continue
 
-            # Drop oldest frame if consumer is falling behind
             if frame_queue.full():
                 try:
                     frame_queue.get_nowait()
@@ -230,25 +227,23 @@ def serial_reader(port, baud):
 #   │ PLOT & COMPASS SETUP                                                       │
 #   └────────────────────────────────────────────────────────────────────────────┘
 
-# ---- Colour palette --------------------------------------------------------
-BG  = '#0d0d0d'   # Background
-FG  = '#cccccc'   # Foreground / labels
-RED = '#e24b4a'   # Accent (arrow, speed)
-DIM = '#444444'   # Muted elements
-GRN = '#00c97d'   # Calibration status
+# Colour palette (white background theme — matches main)
+BG  = "#ffffff"
+RED = '#e24b4a'
+GRN = '#00c97d'
+BLK = "#000000"
+DIM = '#888888'
 
-# ---- Figure layout ---------------------------------------------------------
 fig = plt.figure(figsize=(12, 7), facecolor=BG)
 fig.canvas.manager.set_window_title('Wind Anemometer — press C to calibrate')
 
-# Left 2 columns: 4 rows × 2 cols of signal plots  |  Right column: compass
 gs = fig.add_gridspec(
     4, 3,
     left=0.04, right=0.96, top=0.95, bottom=0.04,
     hspace=0.35, wspace=0.3
 )
 
-sig_axes = [fig.add_subplot(gs[row, col]) for row in range(4) for col in range(2)]
+sig_axes   = [fig.add_subplot(gs[row, col]) for row in range(4) for col in range(2)]
 ax_compass = fig.add_subplot(gs[:, 2])
 
 # ---- Signal subplots -------------------------------------------------------
@@ -258,16 +253,10 @@ sig_lines = []
 x_axis    = np.arange(PAYLOAD_SAMPLES)
 
 for idx, ax in enumerate(sig_axes):
-    ax.set_facecolor('#111111')
-    ax.tick_params(colors='#555555', labelsize=6)
-    for spine in ax.spines.values():
-        spine.set_edgecolor('#2a2a2a')
-
-    color = '#00d2ff' if idx % 2 else '#3a7bd5'   # filtered=cyan, raw=blue
-    line, = ax.plot(x_axis, np.zeros(PAYLOAD_SAMPLES), lw=0.7, color=color)
+    ln, = ax.plot(x_axis, np.zeros(PAYLOAD_SAMPLES), lw=0.7)
     ax.set_ylim(-100, 100)
-    ax.set_title(SIGNAL_LABELS[idx], color='#666666', fontsize=7, pad=1)
-    sig_lines.append(line)
+    ax.set_title(SIGNAL_LABELS[idx], color=BLK, fontsize=7, pad=1)
+    sig_lines.append(ln)
 
 # ---- Compass face ----------------------------------------------------------
 ax_compass.set_facecolor(BG)
@@ -276,13 +265,11 @@ ax_compass.set_xlim(-1.3, 1.3)
 ax_compass.set_ylim(-1.45, 1.45)
 ax_compass.axis('off')
 
-# Concentric reference rings
 for radius, alpha in [(1.0, 0.25), (0.7, 0.15), (0.4, 0.10)]:
     ax_compass.add_patch(
-        plt.Circle((0, 0), radius, color=FG, fill=False, lw=0.5, alpha=alpha)
+        plt.Circle((0, 0), radius, color=BLK, fill=False, lw=0.5, alpha=alpha)
     )
 
-# Cardinal & intercardinal labels + tick marks
 CARDINALS = [
     ('N', 0), ('NE', 45), ('E', 90), ('SE', 135),
     ('S', 180), ('SW', 225), ('W', 270), ('NW', 315)
@@ -290,23 +277,22 @@ CARDINALS = [
 for label, deg in CARDINALS:
     rad = np.radians(deg)
     sx, sy = np.sin(rad), np.cos(rad)
-    ax_compass.plot([sx * 0.90, sx * 1.00], [sy * 0.90, sy * 1.00], color=DIM, lw=0.8)
+    ax_compass.plot([sx * 0.90, sx * 1.00], [sy * 0.90, sy * 1.00], color=BLK, lw=0.8)
     is_cardinal = len(label) == 1
     ax_compass.text(
         sx * 1.15, sy * 1.15, label,
         ha='center', va='center',
         fontsize=9 if is_cardinal else 6,
-        color=FG if is_cardinal else DIM,
+        color=BLK if is_cardinal else DIM,
         fontweight='bold' if is_cardinal else 'normal'
     )
 
-# Minor tick marks every 10°
 for deg in range(0, 360, 10):
     if deg % 45 == 0:
         continue
     rad = np.radians(deg)
     sx, sy = np.sin(rad), np.cos(rad)
-    ax_compass.plot([sx * 0.95, sx * 1.00], [sy * 0.95, sy * 1.00], color=DIM, lw=0.4)
+    ax_compass.plot([sx * 0.95, sx * 1.00], [sy * 0.95, sy * 1.00], color=BLK, lw=0.4)
 
 # ---- Compass dynamic elements ----------------------------------------------
 speed_circle = plt.Circle((0, 0), 0.01, color=RED, alpha=0.15, fill=True)
@@ -314,33 +300,30 @@ ax_compass.add_patch(speed_circle)
 
 arrow_line, = ax_compass.plot([0, 0], [0,  0.65], color=RED, lw=2.5, solid_capstyle='round')
 arrow_head, = ax_compass.plot([0],    [0.65],      marker='^', ms=8, color=RED, markeredgewidth=0)
-arrow_tail, = ax_compass.plot([0, 0], [0, -0.30],  color=DIM, lw=1.2, linestyle='--', dash_capstyle='round')
-ax_compass.plot(0, 0, 'o', color=FG, ms=4, zorder=5)  # centre dot
+arrow_tail, = ax_compass.plot([0, 0], [0, -0.30],  color=BLK, lw=1.2, linestyle='--', dash_capstyle='round')
+ax_compass.plot(0, 0, 'o', color=BLK, ms=4, zorder=5)
 
-# ---- Compass text labels ---------------------------------------------------
+# ---- Compass text labels (offset_txt added from main) ----------------------
 spd_txt    = ax_compass.text(0, -1.08, '-- m/s',            ha='center', va='center', fontsize=10,  color=RED, fontfamily='monospace')
-dir_txt    = ax_compass.text(0,  1.25, '--°',               ha='center', va='center', fontsize=8,   color=FG,  fontfamily='monospace')
-lag_txt    = ax_compass.text(0, -1.20, 'N/S: --  E/W: --',  ha='center', va='center', fontsize=6.5, color=DIM, fontfamily='monospace')
-offset_txt = ax_compass.text(0, -1.32, 'offset: 0 / 0',     ha='center', va='center', fontsize=6.5, color=DIM, fontfamily='monospace')
-calib_txt  = ax_compass.text(0, -1.43, '',                  ha='center', va='center', fontsize=7,   color=GRN, fontfamily='monospace')
-ax_compass.text(0,  1.38, 'WIND', ha='center', va='center', fontsize=9, color=DIM, fontfamily='monospace', fontweight='bold')
+dir_txt    = ax_compass.text(0,  1.25, '--°',               ha='center', va='center', fontsize=8,   color=BLK, fontfamily='monospace')
+lag_txt    = ax_compass.text(0, -1.20, 'N/S: --  E/W: --',  ha='center', va='center', fontsize=6.5, color=BLK, fontfamily='monospace')
+offset_txt = ax_compass.text(0, -1.32, 'offset: 0 / 0',     ha='center', va='center', fontsize=6.5, color=BLK, fontfamily='monospace')
+calib_txt  = ax_compass.text(0, -1.43, '',                   ha='center', va='center', fontsize=7,   color=GRN, fontfamily='monospace')
+ax_compass.text(0,  1.38, 'WIND', ha='center', va='center', fontsize=9, color=BLK, fontfamily='monospace', fontweight='bold')
 
 
 #   ┌────────────────────────────────────────────────────────────────────────────┐
 #   │ HELPERS                                                                    │
 #   └────────────────────────────────────────────────────────────────────────────┘
 
-# 16-point compass rose labels
 _COMPASS_ROSE = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
                  'S','SSW','SW','WSW','W','WNW','NW','NNW']
 
 def direction_label(degrees):
-    """Convert a bearing in degrees to a 16-point compass label."""
     return _COMPASS_ROSE[int((degrees + 11.25) / 22.5) % 16]
 
 
 def rotate_point(px, py, degrees):
-    """Rotate point (px, py) by `degrees` clockwise around the origin."""
     rad = np.radians(degrees)
     c, s = np.cos(rad), np.sin(rad)
     return c * px - s * py, s * px + c * py
@@ -351,7 +334,6 @@ def rotate_point(px, py, degrees):
 #   └────────────────────────────────────────────────────────────────────────────┘
 
 def on_key_press(event):
-    """Start a calibration run when the user presses C in the plot window."""
     global calib_active, calib_start_time, calib_lags_ns, calib_lags_ew
 
     if event.key not in ('c', 'C'):
@@ -359,7 +341,7 @@ def on_key_press(event):
 
     with calib_lock:
         if calib_active:
-            return   # Already calibrating — ignore
+            return
 
         calib_active     = True
         calib_start_time = time.time()
@@ -373,10 +355,9 @@ fig.canvas.mpl_connect('key_press_event', on_key_press)
 
 
 #   ┌────────────────────────────────────────────────────────────────────────────┐
-#   │ ANIMATION UPDATE  (called by FuncAnimation every ~50 ms)                   │
+#   │ ANIMATION UPDATE  (called by FuncAnimation every ~50 ms)                  │
 #   └────────────────────────────────────────────────────────────────────────────┘
 
-# Collect all animated artists for blit return
 _ALL_ARTISTS = lambda: (
     sig_lines + [arrow_line, arrow_head, arrow_tail,
                  speed_circle, spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
@@ -384,8 +365,8 @@ _ALL_ARTISTS = lambda: (
 
 def update(_frame_num):
     global calib_active, offset_ns, offset_ew
+    global smooth_ns, smooth_ew, last_direction_deg
 
-    # ---- Fetch latest frame ------------------------------------------------
     try:
         south, north, west, east = frame_queue.get_nowait()
     except queue.Empty:
@@ -403,8 +384,6 @@ def update(_frame_num):
     east_f  = bandpass_filter(east  * _hanning_window, 30e3, 50e3, FS)
 
     # ---- Cross-correlation lag estimation ----------------------------------
-    # Positive lag_ns → south signal leads → wind blowing southward
-    # Positive lag_ew → west signal leads  → wind blowing westward
     raw_lag_ns = get_lag(south_f, north_f)
     raw_lag_ew = get_lag(west_f,  east_f)
 
@@ -420,40 +399,48 @@ def update(_frame_num):
                 calib_txt.set_text(f'CALIBRATING... {remaining:.1f}s')
                 calib_txt.set_color(GRN)
             else:
-                # Finalise: store median lag as zero-wind offset
-                offset_ns = float(np.median(calib_lags_ns))
-                offset_ew = float(np.median(calib_lags_ew))
+                offset_ns    = float(np.median(calib_lags_ns))
+                offset_ew    = float(np.median(calib_lags_ew))
                 calib_active = False
 
-                # Reset smoothing buffers so stale pre-calibration data is gone
                 lag_buffer_ns.clear();  wind_buffer_ns.clear()
                 lag_buffer_ew.clear();  wind_buffer_ew.clear()
+
+                # Reset EMA state so stale pre-calibration vector is gone
+                smooth_ns = 0.0
+                smooth_ew = 0.0
 
                 calib_txt.set_text(f'CAL DONE  ns={offset_ns:+.2f}  ew={offset_ew:+.2f}')
                 calib_txt.set_color(GRN)
                 print(f"\n [CAL] Done — offset N/S: {offset_ns:+.3f} samples  "
-                      f"E/W: {offset_ew:+.3f} samples", end='\n\nc')
+                      f"E/W: {offset_ew:+.3f} samples\n")
 
     # ---- Apply calibration offset ------------------------------------------
     lag_ns = raw_lag_ns - offset_ns
     lag_ew = raw_lag_ew - offset_ew
 
     # ---- Wind speed calculation  v = Δt · c² / (2d) -----------------------
-    #   Δt = lag / FS  (seconds)
-    #   2d = EFFECTIVE_DISTANCE = 2 × SENSOR_DISTANCE  (metres)
     wind_ns = -(lag_ns / FS) * (SOUND_SPEED ** 2 / EFFECTIVE_DISTANCE)
     wind_ew =  (lag_ew / FS) * (SOUND_SPEED ** 2 / EFFECTIVE_DISTANCE)
 
-    # ---- Outlier-resistant smoothing ---------------------------------------
+    # ---- Outlier-resistant median smoothing --------------------------------
     smooth_lag_ns  = smooth_median(lag_buffer_ns,  lag_ns)
     smooth_wind_ns = smooth_median(wind_buffer_ns, wind_ns)
     smooth_lag_ew  = smooth_median(lag_buffer_ew,  lag_ew)
     smooth_wind_ew = smooth_median(wind_buffer_ew, wind_ew)
 
-    # ---- Polar conversion --------------------------------------------------
-    wind_speed    = np.sqrt(smooth_wind_ns ** 2 + smooth_wind_ew ** 2)
-    direction_rad = np.arctan2(smooth_wind_ew, smooth_wind_ns)
-    direction_deg = (np.degrees(direction_rad) + 360) % 360
+    # ---- EMA on wind vector components (from main) -------------------------
+    smooth_ns  = (1 - DIR_VECTOR_ALPHA) * smooth_ns + DIR_VECTOR_ALPHA * smooth_wind_ns
+    smooth_ew  = (1 - DIR_VECTOR_ALPHA) * smooth_ew + DIR_VECTOR_ALPHA * smooth_wind_ew
+    wind_speed = np.sqrt(smooth_ns ** 2 + smooth_ew ** 2)
+
+    # ---- Direction hold at low speed (from main) ---------------------------
+    if wind_speed > MIN_DIR_SPEED:
+        direction_rad      = np.arctan2(smooth_ew, smooth_ns)
+        direction_deg      = (np.degrees(direction_rad) + 360) % 360
+        last_direction_deg = direction_deg
+    else:
+        direction_deg = last_direction_deg
 
     # ---- Terminal readout --------------------------------------------------
     cal_tag = '[CAL]' if calib_active else f'[off {offset_ns:+.1f}/{offset_ew:+.1f}]'
@@ -465,26 +452,25 @@ def update(_frame_num):
     sys.stdout.flush()
 
     # ---- Update compass arrow ----------------------------------------------
-    ax_px,   ay_px   = rotate_point(0,  0.65, direction_deg)
-    tail_x,  tail_y  = rotate_point(0, -0.30, direction_deg)
+    ax_px,  ay_px  = rotate_point(0,  0.65, direction_deg)
+    tail_x, tail_y = rotate_point(0, -0.30, direction_deg)
 
-    arrow_line.set_data([0, ax_px],    [0, ay_px])
-    arrow_head.set_data([ax_px],       [ay_px])
+    arrow_line.set_data([0, ax_px],  [0, ay_px])
+    arrow_head.set_data([ax_px],     [ay_px])
     arrow_head.set_marker((3, 0, direction_deg))
-    arrow_tail.set_data([0, tail_x],   [0, tail_y])
+    arrow_tail.set_data([0, tail_x], [0, tail_y])
 
-    # Speed circle scales with wind magnitude (capped at MAX_DISPLAY_SPEED)
     radius = min(wind_speed / MAX_DISPLAY_SPEED, 1.0) * 0.85
     speed_circle.set_radius(max(radius, 0.01))
 
-    # ---- Update compass text -----------------------------------------------
+    # ---- Update compass text (offset_txt from main) ------------------------
     spd_txt.set_text(f'{wind_speed:.1f} m/s')
     dir_txt.set_text(f'{direction_deg:.0f}° {direction_label(direction_deg)}')
     lag_txt.set_text(f'N/S {smooth_lag_ns:+.2f}  E/W {smooth_lag_ew:+.2f}')
-    offset_txt.set_text(f'offset  ns:{offset_ns:+.2f}  ew:{offset_ew:+.2f}')
+    offset_txt.set_text(f'off ns:{offset_ns:+.2f}  ew:{offset_ew:+.2f}')
 
     # ---- Update signal plots -----------------------------------------------
-    raw_lim  = max(np.max(np.abs(s)) for s in [south, north, west, east])  * 1.2 + 1
+    raw_lim  = max(np.max(np.abs(s)) for s in [south, north, west, east])         * 1.2 + 1
     filt_lim = max(np.max(np.abs(s)) for s in [south_f, north_f, west_f, east_f]) * 1.2 + 1
 
     plot_data = [
@@ -499,6 +485,7 @@ def update(_frame_num):
 
     return _ALL_ARTISTS()
 
+
 #   ┌────────────────────────────────────────────────────────────────────────────┐
 #   │ ENTRY POINT                                                                │
 #   └────────────────────────────────────────────────────────────────────────────┘
@@ -511,7 +498,6 @@ if __name__ == '__main__':
     print("=" * 87)
     print()
 
-    # Start background serial reader
     reader_thread = threading.Thread(
         target=serial_reader,
         args=(PORT, BAUD),
