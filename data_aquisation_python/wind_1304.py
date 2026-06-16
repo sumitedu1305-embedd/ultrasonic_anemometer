@@ -29,6 +29,7 @@ HEADER_SOUTHOUT = 0xAA55
 HEADER_NORTHOUT = 0xBB55
 HEADER_WESTOUT  = 0xCC55
 HEADER_EASTOUT  = 0xDD55
+HEADER_TEMP     = 0xEE55
 
 # Signal parameters
 PAYLOAD_SAMPLES    = 275          # ADC samples per frame
@@ -101,6 +102,7 @@ def bandpass_filter(data, low_cut, high_cut, fs, order=4):
 
 # Pre-computed Hanning window (applied once per frame)
 _hanning_window = np.hanning(PAYLOAD_SAMPLES)
+
 
 
 #   ┌────────────────────────────────────────────────────────────────────────────┐
@@ -207,6 +209,12 @@ def serial_reader(port, baud):
             if not expect_header(HEADER_EASTOUT): break
             east = read_payload()
             if east is None: continue
+            
+            if not expect_header(HEADER_TEMP): break
+            temp_raw = read_exact(4)
+            if len(temp_raw) != 4: continue
+            
+            sound_speed_val = struct.unpack('<f', temp_raw)[0]
 
             if frame_queue.full():
                 try:
@@ -214,7 +222,7 @@ def serial_reader(port, baud):
                 except queue.Empty:
                     pass
 
-            frame_queue.put_nowait((south, north, west, east))
+            frame_queue.put_nowait((south, north, west, east, sound_speed_val))
 
         except Exception as exc:
             if not stop_event.is_set():
@@ -234,7 +242,7 @@ GRN = '#00c97d'
 BLK = "#000000"
 DIM = '#888888'
 
-fig = plt.figure(figsize=(12, 7), facecolor=BG)
+fig = plt.figure(figsize=(8, 6), facecolor=BG)
 fig.canvas.manager.set_window_title('Wind Anemometer — press C to calibrate')
 
 gs = fig.add_gridspec(
@@ -368,7 +376,8 @@ def update(_frame_num):
     global smooth_ns, smooth_ew, last_direction_deg
 
     try:
-        south, north, west, east = frame_queue.get_nowait()
+        # --- MODIFIED: Added sound_speed_val to unpacking ---
+        south, north, west, east, sound_speed_val = frame_queue.get_nowait()
     except queue.Empty:
         return _ALL_ARTISTS()
 
@@ -385,7 +394,7 @@ def update(_frame_num):
 
     # ---- Cross-correlation lag estimation ----------------------------------
     raw_lag_ns = get_lag(south_f, north_f)
-    raw_lag_ew = get_lag(west_f,  east_f)
+    raw_lag_ew = get_lag(west_f,  east_f) ;
 
     # ---- Calibration: collect lags or finalise offset ----------------------
     with calib_lock:
@@ -444,10 +453,14 @@ def update(_frame_num):
 
     # ---- Terminal readout --------------------------------------------------
     cal_tag = '[CAL]' if calib_active else f'[off {offset_ns:+.1f}/{offset_ew:+.1f}]'
+    
+    # --- MODIFIED: Added sound_speed_val to terminal print ---
     sys.stdout.write(
         f"\r {cal_tag}  Wind: {wind_speed:6.3f} m/s | "
         f"Dir: {direction_deg:6.1f}° {direction_label(direction_deg):<3s} | "
-        f"Lag N/S: {smooth_lag_ns:+7.2f} | Lag E/W: {smooth_lag_ew:+7.2f}   "
+        f"Lag N/S: {smooth_lag_ns:+7.2f} | Lag E/W: {smooth_lag_ew:+7.2f} | "
+        f"SndSpd: {sound_speed_val:6.2f} m/s | "
+        f"Temp: {((sound_speed_val-331.3)/0.606):3.2f}"
     )
     sys.stdout.flush()
 
@@ -484,7 +497,6 @@ def update(_frame_num):
         sig_axes[idx].set_ylim(-ylim, ylim)
 
     return _ALL_ARTISTS()
-
 
 #   ┌────────────────────────────────────────────────────────────────────────────┐
 #   │ ENTRY POINT                                                                │

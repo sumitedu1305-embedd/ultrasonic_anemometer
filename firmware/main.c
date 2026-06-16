@@ -18,6 +18,10 @@ float current_temp_c = 25.0;
 volatile uint16_t raw_temp_adc = 0;
 float sound_speed_wrt_temp = 0;
 
+// 632 27.37
+//667 29.9
+//739 35
+
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ MAIN                                                                       │
 //   └────────────────────────────────────────────────────────────────────────────┘
@@ -33,6 +37,7 @@ int main(void)
     TIM3_RateCheckADC_EVTCheckTIM2();
     ADC1_DMA_TIM2_Config();
     USART2_DMA_TX_Init();
+    ADC2_TemperatureInit();
 
     delay_ms(10);
 
@@ -202,11 +207,19 @@ void ADC2_TemperatureInit(void)
     while (!(ADC_ISR(ADC2) & (1 << 0)));    // Wait until ADC is ready
     ADC_CR(ADC2) |= (1 << 2);               // ADSTART = 1
 }
-void Process_Temperature_Math(void) 
+void Process_Temperature_Math(void)
 {
-    current_temp_c = 28.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
-    sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);
+	//current_temp_c = (raw_temp_adc * 0.070833333333333333f) - 16.3458333333333331;
+	
+	current_temp_c = (raw_temp_adc * 0.0712375) -17.63737; // equation as per manual readings 
+																			 // the actual curve is not linear but 
+																			 // big variation wont come and 
+																			 // thus such equation is not a big problem
+    sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);	
 }
+
+    
+
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ ADC1                                                                       │
