@@ -19,7 +19,7 @@ print("\n\n")
 #   └────────────────────────────────────────────────────────────────────────────┘
 
 # Serial Interface Settings
-PORT = "COM6"
+PORT = sys.argv[1] if len(sys.argv) > 1 else "COM6"
 BAUD = 921600
 
 # Packet Hardware Headers (North -> South -> East -> West)
@@ -30,7 +30,7 @@ HEADER_EASTOUT  = 0xDD55
 HEADER_TEMP     = 0xEE55
 
 # Physical & DSP Parameters
-PAYLOAD_SAMPLES = 220
+PAYLOAD_SAMPLES = 300
 FS              = 1e6       # Sampling Frequency (1 MHz)
 SENSOR_DISTANCE = 0.210     # Distance between transducers (meters)
 SOUND_SPEED     = 343.0     # Speed of sound at ~20°C (m/s)
@@ -211,7 +211,7 @@ RED = '#e24b4a'
 GRN = '#00c97d'
 BLK = "#000000"
 
-fig = plt.figure(figsize=(12, 7), facecolor=BG)
+fig = plt.figure(figsize=(8,6), facecolor=BG)
 gs  = fig.add_gridspec(4, 3, left=0.04, right=0.96, top=0.95, bottom=0.04, hspace=0.35, wspace=0.3)
 
 sig_axes   = [fig.add_subplot(gs[r, c]) for r in range(4) for c in range(2)]
@@ -462,3 +462,7 @@ if __name__ == '__main__':
        # neg ns 4.1 wind towards north
        # neg ew 4.2 wind towards west
        # pos ew 3.9 wind towards east
+       
+       
+       #25.51 670
+       #26.03 712

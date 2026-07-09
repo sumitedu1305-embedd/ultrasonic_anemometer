@@ -117,9 +117,6 @@ int main(void)
 
         DMA_CCR(DMA1, DMA_CHANNEL_7) |= 1;
         
-        GPIO_Toggle(TP1_GPIO_Port, TP1_Pin);
-        GPIO_Toggle(LED1_GPIO_Port, LED1_Pin);
-        GPIO_Toggle(LED2_GPIO_Port, LED2_Pin);
         GPIO_Toggle(LED3_GPIO_Port, LED3_Pin);
     }
 }
@@ -169,7 +166,13 @@ void ADC2_TemperatureInit(void)
 }
 void Process_Temperature_Math(void) 
 {
-    current_temp_c = 28.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
+	// pt100 is non linear actually
+	// but non linear terms start affecting after high temps
+	// thus they can be ignored
+	// resolution required would not be greater than 0.1 degrees (I am targetting 1 degree right now)
+	// R(t) = R_0(1 + At + Bt^2)
+	// R0 = 100 | A = 0.0039083 | B = -5.775 * 10^{-7}
+    current_temp_c = ((float)raw_temp_adc * 0.00540265) + 22.02146f;//27.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
     sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);
 }
 
@@ -442,15 +445,39 @@ void TIM16_PWM_BurstInit()
     TIM_SR(TIM16) &= ~1;  // ? clear the spurious UIF BEFORE enabling NVIC
     NVIC_EnableIRQ(TIM16_IRQn);
 }
+/*
+Earlier egr was used
+This made ISR work as soon as i write it
+Thus interrupts fire two times one when EGR is written and other after ARR is hit
+
+Now this works fine for delay less than 200
+As TIM1 gets activate before other time interrupt fires
+Thus the second activate basically dont have any impact on TIM1
+
+The 8-pulse burst takes exactly 200µs to complete (8 * 25µs). 
+If DELAY_SILENT_ZONE was >= 200, TIM4 would hit 200µs at the *exact same moment* * the physical burst finished. 
+The real interrupt would fire, jump into the ISR, and completely reset TIM4 back to zero just as it was about to trigger the ADC. 
+This caused TIM4 to count all over again, resulting in a massive time shift.
+
+We now temporarily mask the interrupt before triggering the EGR update.
+1. Disable TIM16 interrupts (TIM_DIER &= ~1).
+2. Trigger the EGR update to latch the Repetition Counter (RCR).
+3. Clear the spurious UIF flag caused by EGR (TIM_SR &= ~1).
+4. Re-enable interrupts (TIM_DIER |= 1) and start the timer.
+
+Silly lol !!!!!!!!!!!!!!!!!!!!!!!!!!
+*/
 inline static void TX_pulses(uint16_t pulses)
 {
-    TIM_CR1(TIM16) &= ~1; // stop timer first
+    TIM_CR1(TIM16) &= ~1;  // stop timer first
+    TIM_DIER(TIM16) &= ~1; // 1. Disable interrupt temporarily to prevent the phantom ISR jump
     TIM_RCR(TIM16) = pulses - 1;
     TIM_CNT(TIM16) = 0;
-    TIM_SR(TIM16) &= ~1; // clear any pending UIF
-    TIM_EGR(TIM16) |= 1; // latch RCR value
-    TIM_SR(TIM16) &= ~1; // clear UIF caused by EGR
-    TIM_CR1(TIM16) |= 1; // start
+    TIM_SR(TIM16) &= ~1;   // may fire isr and thus clear pending UIF      
+    TIM_EGR(TIM16) |= 1;   //lLatch RCR value-> the culprit
+    TIM_SR(TIM16) &= ~1;   // cear the UIF flag caused by EGR safely while interrupts are off
+    TIM_DIER(TIM16) |= 1;  // renable interrupt and start
+    TIM_CR1(TIM16) |= 1;   
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐

@@ -1,10 +1,13 @@
+#ifndef ORTHOGONAL_CONFIGURATION
+#define ORTHOGONAL_CONFIGURATION
+
 #include "stdint.h"
 #include "string.h"
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ BASE ADDRESSES                                                             │
 //   └────────────────────────────────────────────────────────────────────────────┘
-
+ 
 #define RCC_BASE        0x40021000UL
 
 #define SYSCFG          0x40010000UL
@@ -180,12 +183,12 @@
 //   └────────────────────────────────────────────────────────────────────────────┘
 
 // presonally defined
-#define BUFFER_SIZE             220
+#define BUFFER_SIZE             300
 #define PULSE_COUNT             8
-#define DELAY_SILENT_ZONE       470
+#define DELAY_SILENT_ZONE       410
 #define BAUDRATE                921600
 #define DELAY_BUFFER_TRANSMIT   15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
-#define DELAY_RINGING           5         // should consider time required for sampling too (1ms for sampling RN)
+#define DELAY_RINGING           15	         // should consider time required for sampling too (1ms for sampling RN)
 
 // peripheral - pin
 #define LED1_Pin        2
@@ -206,24 +209,32 @@
         {                                                      \
                 GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 0); \
                 GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 0); \
+                GPIO_Set(LED1_GPIO_Port,LED1_Pin,0);           \
+                GPIO_Set(LED2_GPIO_Port,LED2_Pin,0);           \
         } while (0)
 #define north_out()                                            \
         do                                                     \
         {                                                      \
                 GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 0); \
                 GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
+                GPIO_Set(LED1_GPIO_Port,LED1_Pin,0);           \
+                GPIO_Set(LED2_GPIO_Port,LED2_Pin,1);           \
         } while (0)
 #define west_out()                                             \
         do                                                     \
         {                                                      \
                 GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 1); \
                 GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 0); \
+                GPIO_Set(LED1_GPIO_Port,LED1_Pin,1);           \
+                GPIO_Set(LED2_GPIO_Port,LED2_Pin,0);           \
         } while (0)
 #define east_out()                                             \
         do                                                     \
         {                                                      \
                 GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 1); \
                 GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
+                GPIO_Set(LED1_GPIO_Port,LED1_Pin,1);           \
+                GPIO_Set(LED2_GPIO_Port,LED2_Pin,1);           \
         } while (0)
 
 // peripheral - port
@@ -295,3 +306,5 @@ void RCC_Init();
 void CheckHardware();
 
 void SomethingsWrong();
+
+#endif
