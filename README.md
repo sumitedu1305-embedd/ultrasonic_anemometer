@@ -1,4 +1,1 @@
-orthogonal configuration
-
-
-
+NEW PCB ORTHOGONAL CONFIGURATION
