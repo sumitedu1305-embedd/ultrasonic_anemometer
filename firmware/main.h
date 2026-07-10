@@ -3,6 +3,7 @@
 
 #include "stdint.h"
 #include "string.h"
+#include "math.h"
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ BASE ADDRESSES                                                             │
@@ -189,6 +190,7 @@
 #define BAUDRATE                921600
 #define DELAY_BUFFER_TRANSMIT   15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
 #define DELAY_RINGING           15	         // should consider time required for sampling too (1ms for sampling RN)
+#define BUFFER_TEMP_SIZE		  5
 
 // peripheral - pin
 #define LED1_Pin        2
@@ -260,6 +262,8 @@ uint16_t adc_buffer1[BUFFER_SIZE + 1];
 uint16_t adc_buffer2[BUFFER_SIZE + 1];
 uint16_t adc_buffer3[BUFFER_SIZE + 1];
 uint16_t adc_buffer4[BUFFER_SIZE + 1];
+uint16_t temp_buffer[BUFFER_TEMP_SIZE];
+
 
 // debug var for frequency estimations
 uint32_t cnt;
@@ -268,6 +272,8 @@ uint32_t cnt;
 float current_temp_c;
 volatile uint16_t raw_temp_adc;
 float sound_speed_wrt_temp;
+uint16_t temp_buff_index;
+uint16_t filt_temp_adc;
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ FUNCTION DECLARATIONS - FIRMWARE                                           │
@@ -306,5 +312,7 @@ void RCC_Init();
 void CheckHardware();
 
 void SomethingsWrong();
+
+uint16_t calculate_mean(uint16_t data[], int size);
 
 #endif

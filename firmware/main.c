@@ -9,6 +9,9 @@ uint16_t adc_buffer1[BUFFER_SIZE + 1] = {[0] = 0xAA55};
 uint16_t adc_buffer2[BUFFER_SIZE + 1] = {[0] = 0xBB55};
 uint16_t adc_buffer3[BUFFER_SIZE + 1] = {[0] = 0xCC55};
 uint16_t adc_buffer4[BUFFER_SIZE + 1] = {[0] = 0xDD55};
+uint16_t temp_buffer[BUFFER_TEMP_SIZE];
+uint16_t temp_buff_index = 0;
+uint16_t filt_temp_adc = 0;
 
 // debug variable for frequency estimation
 uint32_t cnt = 0;
@@ -172,8 +175,23 @@ void Process_Temperature_Math(void)
 	// resolution required would not be greater than 0.1 degrees (I am targetting 1 degree right now)
 	// R(t) = R_0(1 + At + Bt^2)
 	// R0 = 100 | A = 0.0039083 | B = -5.775 * 10^{-7}
-    current_temp_c = ((float)raw_temp_adc * 0.00540265) + 22.02146f;//27.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
+	 temp_buffer[temp_buff_index++] = raw_temp_adc;
+	 if(temp_buff_index == BUFFER_TEMP_SIZE)
+	 {
+		 filt_temp_adc = calculate_mean(temp_buffer,BUFFER_TEMP_SIZE);
+		 temp_buff_index = 0;
+	 }
+    current_temp_c = 26.2f + ((float)(filt_temp_adc - 662) * 0.06000f);
     sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);
+}
+uint16_t calculate_mean(uint16_t data[], int size) {
+    if (size <= 0) return 0.0;
+    
+    double sum = 0.0;
+    for (int i = 0; i < size; i++) {
+        sum += data[i];
+    }
+    return sum / size;
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
