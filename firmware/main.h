@@ -3,11 +3,15 @@
 
 #include "stdint.h"
 #include "string.h"
+#include "math.h"
+
+#define SCB_CPACR (*(volatile uint32_t *)0xE000ED88)
+#define SCB_VTOR  (*(volatile uint32_t *)0xE000ED08)
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ BASE ADDRESSES                                                             │
 //   └────────────────────────────────────────────────────────────────────────────┘
- 
+
 #define RCC_BASE        0x40021000UL
 
 #define SYSCFG          0x40010000UL
@@ -183,59 +187,16 @@
 //   └────────────────────────────────────────────────────────────────────────────┘
 
 // presonally defined
-#define BUFFER_SIZE             300
-#define PULSE_COUNT             8
-#define DELAY_SILENT_ZONE       410
+#define BUFFER_SIZE             350
+#define PULSE_COUNT             10
+#define DELAY_SILENT_ZONE       580               //(25*PULSE_COUNT)+210 // extra added as EGR will fire event at the starting pulse
 #define BAUDRATE                921600
-#define DELAY_BUFFER_TRANSMIT   15 //(((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
-#define DELAY_RINGING           15	         // should consider time required for sampling too (1ms for sampling RN)
-
-// peripheral - pin
-#define LED1_Pin        2
-#define LED2_Pin        3
-#define ECHO_OUT_Pin    0
-#define TP2_Pin         4
-#define PWR_DRV0_Pin    5
-#define SWITCH_B_Pin    7
-#define SWITCH_A_Pin    0
-#define PWR_ON_Pin      1
-#define PWR_DRV1_Pin    2
-#define TP1_Pin         12
-#define LED3_Pin        6
-
-// gpio mux output configs 
-#define south_out()                                            \
-        do                                                     \
-        {                                                      \
-                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 0); \
-                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 0); \
-                GPIO_Set(LED1_GPIO_Port,LED1_Pin,0);           \
-                GPIO_Set(LED2_GPIO_Port,LED2_Pin,0);           \
-        } while (0)
-#define north_out()                                            \
-        do                                                     \
-        {                                                      \
-                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 0); \
-                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
-                GPIO_Set(LED1_GPIO_Port,LED1_Pin,0);           \
-                GPIO_Set(LED2_GPIO_Port,LED2_Pin,1);           \
-        } while (0)
-#define west_out()                                             \
-        do                                                     \
-        {                                                      \
-                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 1); \
-                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 0); \
-                GPIO_Set(LED1_GPIO_Port,LED1_Pin,1);           \
-                GPIO_Set(LED2_GPIO_Port,LED2_Pin,0);           \
-        } while (0)
-#define east_out()                                             \
-        do                                                     \
-        {                                                      \
-                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 1); \
-                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
-                GPIO_Set(LED1_GPIO_Port,LED1_Pin,1);           \
-                GPIO_Set(LED2_GPIO_Port,LED2_Pin,1);           \
-        } while (0)
+#define DELAY_BUFFER_TRANSMIT   15 		 // (((((BUFFER_SIZE + 1) * 2) * 10) / BAUDRATE) + 5) //10 to conside stop start bits and 3 for added safety
+#define DELAY_RINGING           20	         // should consider time required for sampling too (1ms for sampling RN)
+#define GAIN_OFFSET             1.0f      
+#define BIAS_OFFSET             3.2476f  // only bias offset works fair right now less than 1 degrees of variations from the reference device
+#define TEMP_BUFFER_SIZE        10
+#define CALIB_SAMPLES           100
 
 // peripheral - port
 #define PWR_DRV0_GPIO_Port      GPIOA
@@ -243,12 +204,55 @@
 #define LED2_GPIO_Port          GPIOC
 #define LED1_GPIO_Port          GPIOC
 #define LED3_GPIO_Port          GPIOC
-#define TP1_GPIO_Port           GPIOB
-#define TP2_GPIO_Port           GPIOA
 #define PWR_DRV1_GPIO_Port      GPIOB
 #define SWITCH_A_GPIO_Port      GPIOB
 #define PWR_ON_GPIO_Port        GPIOB
 #define SWITCH_B_GPIO_Port      GPIOA
+
+// peripheral - pin
+#define PWR_DRV0_Pin    5
+#define ECHO_OUT_Pin    0
+#define LED2_Pin        3
+#define LED1_Pin        2
+#define LED3_Pin        6
+#define PWR_DRV1_Pin    2
+#define SWITCH_A_Pin    0
+#define PWR_ON_Pin      1
+#define SWITCH_B_Pin    7
+
+// gpio mux output configs 
+#define south_out()                                            \
+        do                                                     \
+        {                                                      \
+                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 0); \
+                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 0); \
+                GPIO_Set(PWR_DRV0_GPIO_Port, PWR_DRV0_Pin, 1); \
+                GPIO_Set(PWR_DRV1_GPIO_Port, PWR_DRV1_Pin, 0); \
+        } while (0)
+#define north_out()                                            \
+        do                                                     \
+        {                                                      \
+                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 0); \
+                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
+                GPIO_Set(PWR_DRV0_GPIO_Port, PWR_DRV0_Pin, 0); \
+                GPIO_Set(PWR_DRV1_GPIO_Port, PWR_DRV1_Pin, 1); \
+        } while (0)
+#define west_out()                                             \
+        do                                                     \
+        {                                                      \
+                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 1); \
+                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 0); \
+                GPIO_Set(PWR_DRV0_GPIO_Port, PWR_DRV0_Pin, 1); \
+                GPIO_Set(PWR_DRV1_GPIO_Port, PWR_DRV1_Pin, 0); \
+        } while (0)
+#define east_out()                                             \
+        do                                                     \
+        {                                                      \
+                GPIO_Set(SWITCH_A_GPIO_Port, SWITCH_A_Pin, 1); \
+                GPIO_Set(SWITCH_B_GPIO_Port, SWITCH_B_Pin, 1); \
+                GPIO_Set(PWR_DRV0_GPIO_Port, PWR_DRV0_Pin, 0); \
+                GPIO_Set(PWR_DRV1_GPIO_Port, PWR_DRV1_Pin, 1); \
+        } while (0)
 
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
@@ -260,14 +264,19 @@ uint16_t adc_buffer1[BUFFER_SIZE + 1];
 uint16_t adc_buffer2[BUFFER_SIZE + 1];
 uint16_t adc_buffer3[BUFFER_SIZE + 1];
 uint16_t adc_buffer4[BUFFER_SIZE + 1];
+uint16_t temp_buffer[TEMP_BUFFER_SIZE];
 
 // debug var for frequency estimations
 uint32_t cnt;
+uint8_t temp_buff_index;
 
 // temperature sensor default value
 float current_temp_c;
 volatile uint16_t raw_temp_adc;
 float sound_speed_wrt_temp;
+float calib_bias_offset[CALIB_SAMPLES];
+int count_calib_offset;
+float calib_bias;
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ FUNCTION DECLARATIONS - FIRMWARE                                           │
@@ -281,18 +290,18 @@ void ADC1_DMA_TIM2_Config(void);
 void ADC1_RateCheck(void);
 
 void ADC2_TemperatureInit(void);
-void Process_Temperature_Math(void);
+void Process_Temperature_Math(bool calib, float ref);
 
-void TIM2_SlaveGateMode_TIM1(void);
+void TIM2_SlaveGateMode_TIM3(void);
 
 void TIM4_TriggerInit();
 
-void TIM1_GateForADCTimer(uint16_t samples);
+void TIM3_GateForADCTimer(uint16_t samples);
 
-void TIM16_PWM_BurstInit();
+void TIM1_PWM_BurstInit();
 inline static void TX_pulses(uint16_t pulses);
 
-void TIM15_DelayInit();
+void TIM16_DelayInit();
 inline static void delay_us(uint16_t us);
 inline static void delay_ms(uint16_t ms);
 

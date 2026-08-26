@@ -1,0 +1,36 @@
+TARGET = bootloader
+
+CC      = arm-none-eabi-gcc
+OBJCOPY = arm-none-eabi-objcopy
+SIZE    = arm-none-eabi-size
+
+CPU     = -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
+
+LDSCRIPT = bootloader.ld
+
+CFLAGS  = $(CPU) -Wall -O0 -g3 -ffunction-sections -fdata-sections
+LDFLAGS = $(CPU) -T$(LDSCRIPT) -Wl,--gc-sections -specs=nano.specs -specs=nosys.specs -Wl,-Map=$(TARGET).map
+
+SRCS = main.c startup_stm32l476xx.s
+OBJS = $(SRCS:.c=.o)
+OBJS := $(OBJS:.s=.o)
+
+all: $(TARGET).elf $(TARGET).bin
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.s
+	$(CC) $(CPU) -c $< -o $@
+
+$(TARGET).elf: $(OBJS)
+	$(CC) $(LDFLAGS) $(OBJS) -Wl,--start-group -lc -lm -Wl,--end-group -o $@
+	$(SIZE) $@
+
+$(TARGET).bin: $(TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+
+clean:
+	rm -f *.o *.elf *.bin *.map
+
+.PHONY: all clean

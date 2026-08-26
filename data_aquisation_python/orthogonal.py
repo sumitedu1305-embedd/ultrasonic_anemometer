@@ -30,7 +30,7 @@ HEADER_EASTOUT  = 0xDD55
 HEADER_TEMP     = 0xEE55
 
 # Physical & DSP Parameters
-PAYLOAD_SAMPLES = 300
+PAYLOAD_SAMPLES = 350
 FS              = 1e6       # Sampling Frequency (1 MHz)
 SENSOR_DISTANCE = 0.210     # Distance between transducers (meters)
 SOUND_SPEED     = 343.0     # Speed of sound at ~20°C (m/s)
@@ -77,10 +77,58 @@ last_direction_deg = 0.0
 _butter_cache = {}
 _hanning      = np.hanning(PAYLOAD_SAMPLES)
 
+# Axis-limit smoothing state. Recomputing set_ylim() every frame from the
+# instantaneous noisy max (a) invalidates blit's cached background so it
+# forces a full redraw every tick, defeating blit and dropping FPS, and
+# (b) makes the visible range flicker/oscillate with sample noise. We track
+# a slow EMA of the limit and only call set_ylim when it's actually moved
+# enough to matter.
+_raw_lim_smooth   = 100.0
+_filt_lim_smooth  = 40.0
+LIM_EMA_ALPHA     = 0.08   # how fast the tracked limit follows the signal
+LIM_UPDATE_THRESH = 0.12   # only call set_ylim if it moved >12% from current
+
 ratio_pos_ns = 1.00 # considered this to be correct  (this gives symmetery but a little shift but can be removed during zero calibration)
 ratio_neg_ns = 0.9024
 ratio_pos_ew = 0.9487
 ratio_neg_ew = 0.8810
+
+PRE_LOWPASS_CUTOFF = 60e3   # just above the 30-50k band; trims HF noise/aliasing
+
+# --- Crosstalk gating (fixed-delay direct coupling removal) ---
+# Crosstalk couples into the receiver almost immediately after the transmit
+# pulse fires and decays quickly, at a FIXED sample offset every frame.
+# The real echo arrives later and its delay is what we're measuring, so we
+# blank the early fixed-delay region before any filtering/correlation.
+# TUNE THIS: zoom into a raw buffer right after the transmit pulse and find
+# the sample index where the crosstalk burst has decayed into noise floor.
+GATE_SAMPLES = 150
+GATE_RAMP    = 20   # short cosine ramp so we don't introduce a step edge
+
+def get_lowpass_coeffs(cutoff, fs, order=4):
+    key = ('lp', cutoff, fs, order)
+    if key not in _butter_cache:
+        nyq = 0.5 * fs
+        b, a = butter(order, cutoff / nyq, btype='low')
+        _butter_cache[key] = (b, a)
+    return _butter_cache[key]
+
+def lowpass_filter(data, cutoff, fs, order=4):
+    b, a = get_lowpass_coeffs(cutoff, fs, order)
+    return filtfilt(b, a, data)
+
+def gate_signal(data, gate_samples=GATE_SAMPLES, ramp=GATE_RAMP):
+    """Zero out the fixed-delay crosstalk region before filtering/correlation.
+    Uses a short raised-cosine ramp instead of a hard cutoff to avoid
+    introducing spectral leakage from a step discontinuity."""
+    gated = data.copy()
+    if gate_samples <= 0:
+        return gated
+    gated[:gate_samples] = 0.0
+    if ramp > 0 and gate_samples + ramp <= len(gated):
+        ramp_win = np.hanning(ramp * 2)[:ramp]
+        gated[gate_samples:gate_samples + ramp] *= ramp_win
+    return gated
 
 #   ┌── [INFO] ──────────────────────────────────────────────────────────────────┐
 #   │ 3. DIGITAL SIGNAL PROCESSING (DSP) HELPER FUNCTIONS                        │
@@ -119,6 +167,24 @@ def get_lag(a, b):
         y0, y1, y2 = corr[i - 1], corr[i], corr[i + 1]
         lag += (y0 - y2) / (2 * (y0 - 2 * y1 + y2) + 1e-8)
     return lag
+
+def get_echo_window(sig, thresh_frac=0.5, min_len=100):
+    """Find where the signal envelope reaches steady-state amplitude and
+    return a boolean mask covering only that region. The transducer's
+    ring-up transient (low, uneven amplitude at the start of the burst)
+    is excluded so cross-correlation only sees the clean, high-SNR
+    steady-state portion of the echo — keeps lag estimates from being
+    dragged off by phase inconsistency in the ramp-up region."""
+    env = np.abs(hilbert(sig))
+    env_smooth = np.convolve(env, np.ones(15) / 15, mode='same')
+    peak = env_smooth.max()
+    if peak <= 0:
+        return np.ones(len(sig), dtype=bool)
+    onset_idx = int(np.argmax(env_smooth > thresh_frac * peak))
+    end_idx   = min(onset_idx + max(min_len, len(sig) - onset_idx), len(sig))
+    mask = np.zeros(len(sig), dtype=bool)
+    mask[onset_idx:end_idx] = True
+    return mask
 
 #   ┌── [INFO] ──────────────────────────────────────────────────────────────────┐
 #   │ 4. SERIAL DATA INGESTION PIPELINE                                          │
@@ -300,6 +366,23 @@ def on_key(event):
 
 fig.canvas.mpl_connect('key_press_event', on_key)
 
+# --- Window-close handling ---
+# Root cause of the AttributeError traceback: closing the Tk window doesn't
+# instantly stop FuncAnimation's timer. One more _on_timer tick can fire
+# after Tk has already started tearing down the canvas, so blit's
+# restore_region() call hits a canvas that no longer has that attribute.
+# We stop the timer and set stop_event as soon as the close event fires,
+# before Tk finishes destroying anything.
+def on_close(event):
+    stop_event.set()
+    try:
+        if ani.event_source is not None:
+            ani.event_source.stop()
+    except Exception:
+        pass
+
+fig.canvas.mpl_connect('close_event', on_close)
+
 #   ┌── [INFO] ──────────────────────────────────────────────────────────────────┐
 #   │ 7. MAIN RUNTIME ITERATION (ANIMATION UPDATE LOOP)                          │
 #   └────────────────────────────────────────────────────────────────────────────┘
@@ -308,8 +391,14 @@ def update(frame_num):
     """This function is called continuously by Matplotlib to update the graphs."""
     global calib_active_zero, offset_ns_zero, offset_ew_zero
     global smooth_ns, smooth_ew, last_direction_deg
+    global _raw_lim_smooth, _filt_lim_smooth
 
     artists = [arrow_line, arrow_head, arrow_tail, speed_circle, spd_txt, dir_txt, lag_txt, offset_txt, calib_txt]
+
+    # Bail out immediately if we're shutting down (window closed) so we
+    # never touch a canvas that Tk is in the middle of destroying.
+    if stop_event.is_set():
+        return sig_lines + artists
 
     try:
         s1, s2, s3, s4 = frame_queue.get_nowait()
@@ -326,13 +415,32 @@ def update(frame_num):
     s3 = s3 - s3.mean()
     s4 = s4 - s4.mean()
 
+    # Gate out the fixed-delay crosstalk burst before any filtering, so the
+    # bandpass/correlation stage only ever sees the echo, not the direct
+    # electrical/acoustic coupling that shares the same frequency band.
+    #s1 = gate_signal(s1)
+    #s2 = gate_signal(s2)
+    #s3 = gate_signal(s3)
+    #s4 = gate_signal(s4)
+
+    s1 = lowpass_filter(s1, PRE_LOWPASS_CUTOFF, FS)
+    s2 = lowpass_filter(s2, PRE_LOWPASS_CUTOFF, FS)
+    s3 = lowpass_filter(s3, PRE_LOWPASS_CUTOFF, FS)
+    s4 = lowpass_filter(s4, PRE_LOWPASS_CUTOFF, FS)
+
     s1f = bandpass_filter(s1 * _hanning, 30e3, 50e3, FS)
     s2f = bandpass_filter(s2 * _hanning, 30e3, 50e3, FS)
     s3f = bandpass_filter(s3 * _hanning, 30e3, 50e3, FS)
     s4f = bandpass_filter(s4 * _hanning, 30e3, 50e3, FS)
 
-    raw_lag_ns = get_lag(s1f, s2f)
-    raw_lag_ew = get_lag(s3f, s4f)
+    # Restrict correlation to the steady-state burst region so the
+    # transducer's low-amplitude ring-up transient doesn't drag the lag
+    # estimate off — see get_echo_window().
+    mask_ns = get_echo_window(s1f) & get_echo_window(s2f)
+    mask_ew = get_echo_window(s3f) & get_echo_window(s4f)
+
+    raw_lag_ns = get_lag(s1f[mask_ns], s2f[mask_ns])
+    raw_lag_ew = get_lag(s3f[mask_ew], s4f[mask_ew])
 
     # --- CALIBRATION LOGIC ---
     with calib_lock_zero:
@@ -360,7 +468,7 @@ def update(frame_num):
     corrected_lag_ew = raw_lag_ew - offset_ew_zero
 
     tmp_wind_ns = -(corrected_lag_ns / FS) * (sound_speed**2 / SENSOR_DISTANCE)
-    tmp_wind_ew =  (corrected_lag_ew / FS) * (sound_speed**2 / SENSOR_DISTANCE)
+    tmp_wind_ew = -(corrected_lag_ew / FS) * (sound_speed**2 / SENSOR_DISTANCE)
     tmp_speed   = np.sqrt(tmp_wind_ns**2 + tmp_wind_ew**2)
 
     stable_ns = len(lag_buffer_ns) > 5 and np.std(lag_buffer_ns) < LAG_STABLE_TH
@@ -376,7 +484,7 @@ def update(frame_num):
     corrected_lag_ns *= 1.0          if corrected_lag_ns >= 0 else ratio_neg_ns
     corrected_lag_ew *= ratio_pos_ew if corrected_lag_ew >= 0 else ratio_neg_ew
 
-    wind_ns = -(corrected_lag_ns / FS) * (sound_speed**2 / SENSOR_DISTANCE)
+    wind_ns =  -(corrected_lag_ns / FS) * (sound_speed**2 / SENSOR_DISTANCE)
     wind_ew =  (corrected_lag_ew / FS) * (sound_speed**2 / SENSOR_DISTANCE)
 
     lag_sn  = smooth_median(lag_buffer_ns,  corrected_lag_ns)
@@ -421,16 +529,23 @@ def update(frame_num):
     lag_txt.set_text(f'N/S {lag_sn:+.2f}  E/W {lag_se:+.2f}')
     offset_txt.set_text(f'off ns:{offset_ns_zero:+.2f} ew:{offset_ew_zero:+.2f}  Vs:{sound_speed:.1f}m/s  T:{display_temp_c:+.1f}°C')
 
-    raw_lim  = max(np.max(np.abs(s1)), np.max(np.abs(s2)), np.max(np.abs(s3)), np.max(np.abs(s4))) * 1.2 + 1
-    filt_lim = max(np.max(np.abs(s1f)), np.max(np.abs(s2f)), np.max(np.abs(s3f)), np.max(np.abs(s4f))) * 1.2 + 1
+    raw_lim_now  = max(np.max(np.abs(s1)), np.max(np.abs(s2)), np.max(np.abs(s3)), np.max(np.abs(s4))) * 1.2 + 1
+    filt_lim_now = max(np.max(np.abs(s1f)), np.max(np.abs(s2f)), np.max(np.abs(s3f)), np.max(np.abs(s4f))) * 1.2 + 1
+
+    _raw_lim_smooth  = (1 - LIM_EMA_ALPHA) * _raw_lim_smooth  + LIM_EMA_ALPHA * raw_lim_now
+    _filt_lim_smooth = (1 - LIM_EMA_ALPHA) * _filt_lim_smooth + LIM_EMA_ALPHA * filt_lim_now
 
     plot_configs = [
-        (0, s1, raw_lim),   (1, s1f, filt_lim), (2, s2, raw_lim),   (3, s2f, filt_lim),
-        (4, s3, raw_lim),   (5, s3f, filt_lim), (6, s4, raw_lim),   (7, s4f, filt_lim)
+        (0, s1, _raw_lim_smooth),  (1, s1f, _filt_lim_smooth), (2, s2, _raw_lim_smooth),  (3, s2f, _filt_lim_smooth),
+        (4, s3, _raw_lim_smooth),  (5, s3f, _filt_lim_smooth), (6, s4, _raw_lim_smooth),  (7, s4f, _filt_lim_smooth)
     ]
     for idx, data, lim in plot_configs:
         sig_lines[idx].set_ydata(data)
-        sig_axes[idx].set_ylim(-lim, lim)
+        cur_lo, cur_hi = sig_axes[idx].get_ylim()
+        # Only touch the axis (and invalidate blit's cached background)
+        # when the limit has actually drifted enough to matter.
+        if cur_hi <= 0 or abs(lim - cur_hi) > LIM_UPDATE_THRESH * cur_hi:
+            sig_axes[idx].set_ylim(-lim, lim)
 
     return sig_lines + artists
 
@@ -448,21 +563,34 @@ if __name__ == '__main__':
 
     try:
         ani = FuncAnimation(fig, update, interval=50, blit=True, cache_frame_data=False)
-        plt.show    ()
+
+        # blit=True is smooth but can race on window close: Tk may already
+        # have a timer tick queued when the window is destroyed, so it
+        # fires restore_region() on a canvas that no longer has it
+        # (AttributeError: FigureCanvasBase has no attribute
+        # 'restore_region'). This happens AFTER the window is already gone,
+        # so it's cosmetic, not a real fault. Rather than give up blit
+        # performance to dodge it, silence only this exact error and let
+        # every other exception print normally.
+        def _suppress_post_close_blit_error(exc_type, exc_value, exc_tb):
+            if isinstance(exc_value, AttributeError) and 'restore_region' in str(exc_value):
+                return
+            import traceback as _tb
+            _tb.print_exception(exc_type, exc_value, exc_tb)
+
+        try:
+            fig.canvas.manager.window.report_callback_exception = _suppress_post_close_blit_error
+        except Exception:
+            pass
+        plt.show()
     except KeyboardInterrupt:
         pass
     finally:
         stop_event.set()
+        # ani.event_source can already be None here — on_close() or Tk's own
+        # teardown may have cleared it before we get to this line. Guard it.
+        if 'ani' in dir() and getattr(ani, 'event_source', None) is not None:
+            ani.event_source.stop()
         plt.close('all')
-    
+
         print("\n\nExecution terminated successfully.\n\n")
-        
-        
-       # pos ns 3.7 wind towards south 
-       # neg ns 4.1 wind towards north
-       # neg ew 4.2 wind towards west
-       # pos ew 3.9 wind towards east
-       
-       
-       #25.51 670
-       #26.03 712

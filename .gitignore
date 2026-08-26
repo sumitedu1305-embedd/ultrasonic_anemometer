@@ -1,35 +1,63 @@
-# Python virtual environment
+# build artifacts
+*.o
+*.elf
+*.bin
+*.map
+*.hex
+*.d
+
+# Python virtual environments
 .venv/
 venv/
-env/ 
+ENV/
+env/
 
-# Python cache
+# Python bytecode & cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 
-# Keil MDK / uVision build artifacts
-firmware/DebugConfig/
-firmware/Listings/
-firmware/Objects/
-firmware/RTE/
-*.uvguix.*
+# editor/IDE
+.vscode/
+*.uvprojx
 *.uvoptx
-*.uvgui
-
-# Event recorder
-*.scvd
-
-# Keep these (project essentials)
-#  main.c
-#  main.h
-#  *.uvprojx
-#  wind_1304.py
+Objects/
+Listings/
+DebugConfig/
 
 # OS junk
+Thumbs.db
+.DS_Store
+
+# --- KiCad ---
+# Lock files
+*.lck
+~*.kicad_*
+
+# KiCad user-specific project settings (window position, layer visibility)
+*.kicad_prl
+
+# KiCad backups & autosaves
+*-save.kicad_sch
+*-save.kicad_pcb
+*.bak
+_autosave-*
+
+# Generated Netlists & Export Archives (optional)
+*.net
+*.zip
+
+# --- Editor & OS Cache ---
+.history/
+.vscode/
 .DS_Store
 Thumbs.db
-desktop.ini
 
-.vscode 
+# --- Embedded / C Build Artifacts (if applicable to root) ---
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+
+*.bat

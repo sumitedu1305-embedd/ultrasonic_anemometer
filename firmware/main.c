@@ -9,29 +9,44 @@ uint16_t adc_buffer1[BUFFER_SIZE + 1] = {[0] = 0xAA55};
 uint16_t adc_buffer2[BUFFER_SIZE + 1] = {[0] = 0xBB55};
 uint16_t adc_buffer3[BUFFER_SIZE + 1] = {[0] = 0xCC55};
 uint16_t adc_buffer4[BUFFER_SIZE + 1] = {[0] = 0xDD55};
+uint16_t temp_buffer[10] = {0};
 
 // debug variable for frequency estimation
 uint32_t cnt = 0;
+uint8_t temp_buff_index = 0;
 
 // temperature definition
 float current_temp_c = 25.0;
 volatile uint16_t raw_temp_adc = 0;
 float sound_speed_wrt_temp = 0;
+float calib_bias_offset[CALIB_SAMPLES] = {0};
+int count_calib_offset = 0;
+float calib_bias = 0.0f;
+
+void SystemInit(void) 
+{
+    SCB_CPACR |= (0xF << 20);  // enable full access to FPU coprocessors CP10/CP11
+    SCB_VTOR = 0x08004000;      // tell CPU vector table moved here
+    // intentionally added — clock/RCC setup already handled inside main() via RCC_Init()
+    // otherwise there would be error when running startup as it contains SystemInit() in ResetHandler()
+}
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ MAIN                                                                       │
 //   └────────────────────────────────────────────────────────────────────────────┘
 
+//issue in south out and west out
+
 int main(void)
 {
     RCC_Init();
     GPIO_Init();
-    TIM15_DelayInit();
-    TIM16_PWM_BurstInit();
+
+    TIM16_DelayInit();
+    TIM1_PWM_BurstInit();
     TIM4_TriggerInit();
-    TIM1_GateForADCTimer(BUFFER_SIZE);
-    TIM2_SlaveGateMode_TIM1();
-    TIM3_RateCheckADC_EVTCheckTIM2();
+    TIM3_GateForADCTimer(BUFFER_SIZE);
+    TIM2_SlaveGateMode_TIM3();
     ADC1_DMA_TIM2_Config();
     USART2_DMA_TX_Init();
     ADC2_TemperatureInit();
@@ -39,11 +54,11 @@ int main(void)
     delay_ms(10);
 
     GPIO_Set(PWR_ON_GPIO_Port, PWR_ON_Pin, 0);
-    GPIO_Set(PWR_DRV0_GPIO_Port, PWR_DRV0_Pin, 1);
-    GPIO_Set(PWR_DRV1_GPIO_Port, PWR_DRV1_Pin, 1);
 
-    delay_ms(1);
+    delay_ms(10);
 
+    int cnt_led = 0;
+		
     while (1)
     {
         uint16_t *buffers[4] = {
@@ -55,7 +70,7 @@ int main(void)
 
         for (int i = 0; i < 4; i++)
         {
-            if (i == 0)
+			if (i == 0)
                 south_out();
             else if (i == 1)
                 north_out();
@@ -63,6 +78,8 @@ int main(void)
                 west_out();
             else
                 east_out();
+            
+            delay_ms(1);
 
             TIM_CNT(TIM2) = 0;
             TIM_CNT(TIM3) = 0;
@@ -88,7 +105,7 @@ int main(void)
             cnt = TIM_CNT(TIM3);
         }
 
-        Process_Temperature_Math();
+        Process_Temperature_Math(0,24.73);
 
         // -------- SEND ALL BUFFERS --------
         for (int i = 0; i < 4; i++)
@@ -100,7 +117,7 @@ int main(void)
             DMA_CNDTR(DMA1, DMA_CHANNEL_7) = (BUFFER_SIZE + 1) * 2;
 
             DMA_CCR(DMA1, DMA_CHANNEL_7) |= 1;
- 
+
             delay_ms(DELAY_BUFFER_TRANSMIT);
         }
 
@@ -117,7 +134,17 @@ int main(void)
 
         DMA_CCR(DMA1, DMA_CHANNEL_7) |= 1;
         
-        GPIO_Toggle(LED3_GPIO_Port, LED3_Pin);
+
+        if(cnt_led == 0)
+        {
+            GPIO_Toggle(LED1_GPIO_Port, LED1_Pin);
+            cnt_led++;
+        }
+        else if(cnt_led == 1)
+        {
+				GPIO_Toggle(LED2_GPIO_Port, LED2_Pin);
+            cnt_led = 0;
+        }
     }
 }
 
@@ -164,16 +191,61 @@ void ADC2_TemperatureInit(void)
     while (!(ADC_ISR(ADC2) & (1 << 0)));    // Wait until ADC is ready
     ADC_CR(ADC2) |= (1 << 2);               // ADSTART = 1
 }
-void Process_Temperature_Math(void) 
+void Process_Temperature_Math(bool calib, float ref) 
 {
 	// pt100 is non linear actually
 	// but non linear terms start affecting after high temps
 	// thus they can be ignored
 	// resolution required would not be greater than 0.1 degrees (I am targetting 1 degree right now)
-	// R(t) = R_0(1 + At + Bt^2)
+	// R(t) = R_0(1 + At + Bt^2)a
 	// R0 = 100 | A = 0.0039083 | B = -5.775 * 10^{-7}
-    current_temp_c = ((float)raw_temp_adc * 0.00540265) + 22.02146f;//27.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
+    // current_temp_c = ((float)raw_temp_adc * 0.00540265) + 22.02146f;//27.1f + ((float)(raw_temp_adc - 662) * 0.06000f);
+    // sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);
+
+    // 1. Voltage conversion (assuming 12-bit ADC and 3.3V reference)
+    float vout = ((float)raw_temp_adc / 4095.0f) * 3.3f;
+
+    // 2. Bridge / amplifier reverse transfer function
+    float vp = (vout + 33.0f) / 111.0f;
+
+    // Guard against division by zero
+    if (fabsf(vp - 3.3f) < 1e-4f) return;
+    float rt = (2970.0f - 10900.0f * vp) / (vp - 3.3f);
+
+    // 3. Temperature calculation
+    // Linear approximation is accurate to <0.5 deg C between -20C and 100C
+    float current_temp_c = (rt - 100.0f) / 0.385055f;
+
+    // 4. Calibration & Bias handling
+    if (calib)
+    {
+        current_temp_c = current_temp_c * GAIN_OFFSET;
+        
+        if (count_calib_offset < CALIB_SAMPLES)
+        {
+            calib_bias_offset[count_calib_offset++] = current_temp_c - ref;
+        }
+
+        if (count_calib_offset >= CALIB_SAMPLES)
+        {
+            float sum = 0.0f;
+            for (int i = 0; i < CALIB_SAMPLES; i++)
+            {
+                sum += calib_bias_offset[i];
+            }
+            calib_bias = sum / (float)CALIB_SAMPLES;
+            count_calib_offset = 0;
+        }
+        current_temp_c -= calib_bias; // Subtract offset to match reference
+    }
+    else
+    {
+        current_temp_c = (current_temp_c * GAIN_OFFSET) - BIAS_OFFSET;
+    }
+
+    // 5. Sound speed calculation wrt temperature
     sound_speed_wrt_temp = 331.3f + (0.606f * current_temp_c);
+    temp_buffer[temp_buff_index] = sound_speed_wrt_temp;
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
@@ -275,39 +347,11 @@ void ADC1_RateCheck(void)
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ TIM3                                                                       │
-//   │ config      -> us tick, external clock mode                                │
-//   │ function    -> uses adc event to calculate rate (precautions)              │
-//   └────────────────────────────────────────────────────────────────────────────┘
-void TIM3_RateCheckADC_EVTCheckTIM2()
-{
-    RCC_APB1ENR1 |= (1 << 1);
-
-    TIM_CR1(TIM3) = 0;
-    TIM_SMCR(TIM3) = 0;
-    TIM_PSC(TIM3) = 0;      // no prescaler
-    TIM_ARR(TIM3) = 0xFFFF; // max range
-    TIM_CNT(TIM3) = 0;
-    TIM_SMCR(TIM3) |= (7 << 0); // SMS = 111 ? External clock mode 1
-    TIM_SMCR(TIM3) |= (1 << 4); // TS = 001 ? ITR1 (TIM2)
-    TIM_CR1(TIM3) |= (1 << 0);  // CEN
-
-    TIM_CNT(TIM2) = 0;
-    TIM_CNT(TIM3) = 0;
-
-    TX_pulses(10);
-    delay_ms(5);
-    cnt = TIM_CNT(TIM3);
-    if (cnt < 995)
-        SomethingsWrong();
-}
-
-//   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ TIM1                                                                       │
+//   │ TIM2                                                                       │
 //   │ config      -> us tick, trg0 goes to adc1, pwm 1 mode, slave for tim1      │
 //   │ function    -> generates triggers for ADC (1MSPS) till tim1 is active      │
 //   └────────────────────────────────────────────────────────────────────────────┘
-void TIM2_SlaveGateMode_TIM1(void)
+void TIM2_SlaveGateMode_TIM3(void)
 {
     // --- Enable clocks ---
     RCC_AHB2ENR |= (1 << 0);  // GPIOAEN
@@ -340,7 +384,7 @@ void TIM2_SlaveGateMode_TIM1(void)
     // --- Slave gated mode ---
     TIM_SMCR(TIM2) = 0;
     TIM_SMCR(TIM2) |= (5 << 0); // Gated
-    TIM_SMCR(TIM2) |= (0 << 4); // ITR0 (TIM1)
+    TIM_SMCR(TIM2) |= (2 << 4); // ITR2 (TIM1)
 
     TIM_CR2(TIM2) &= ~(7 << 4);
     TIM_CR2(TIM2) |= (2 << 4); // MMS = 010 ? Update event as TRGO
@@ -351,47 +395,43 @@ void TIM2_SlaveGateMode_TIM1(void)
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ TIM1                                                                       │
+//   │ TIM3                                                                       │
 //   │ config      -> us tick, gated mode for tim2, pwm mode 1                    │
 //   │ function    -> provides gate to make tim2 works for n us                   │
 //   └────────────────────────────────────────────────────────────────────────────┘
-void TIM1_GateForADCTimer(uint16_t pulse_us)
+void TIM3_GateForADCTimer(uint16_t pulse_us)
 {
-    RCC_AHB2ENR |= (1 << 0);  // GPIOAEN (correct)
-    RCC_APB2ENR |= (1 << 11); // TIM1EN (CORRECTED - was (1<<0))
+    RCC_AHB2ENR |= (1 << 1);   // GPIOBEN (bit 1, not bit 0 — that's GPIOA)
+    RCC_APB1ENR1 |= (1 << 1);  // TIM3EN
 
-    GPIO_MODER(GPIOA) &= ~(3 << 16);
-    GPIO_MODER(GPIOA) |= (2 << 16);
-    GPIO_AFRH(GPIOA) &= ~(0xF << 0);
-    GPIO_AFRH(GPIOA) |= (1 << 0);
+    GPIO_MODER(GPIOB) &= ~(3 << (4 * 2));
+    GPIO_MODER(GPIOB) |= (2 << (4 * 2)); // AF mode, PB4
+    GPIO_AFRL(GPIOB) &= ~(0xF << (4 * 4));
+    GPIO_AFRL(GPIOB) |= (2 << (4 * 4));  // AF2 (TIM3_CH1)
 
-    TIM_CR1(TIM1) = 0;
-    TIM_PSC(TIM1) = 79;
-    TIM_ARR(TIM1) = pulse_us + 1;
-    TIM_CCR1(TIM1) = 1;
-    TIM_EGR(TIM1) |= 1;
-    TIM_SR(TIM1) &= ~1;
+    TIM_CR1(TIM3) = 0;
+    TIM_PSC(TIM3) = 79;
+    TIM_ARR(TIM3) = pulse_us + 1;
+    TIM_CCR1(TIM3) = 1;
+    TIM_EGR(TIM3) |= 1;
+    TIM_SR(TIM3) &= ~1;
 
-    TIM_SMCR(TIM1) = 0;
-    TIM_SMCR(TIM1) |= (6 << 0);
-    TIM_SMCR(TIM1) |= (3 << 4);
+    TIM_SMCR(TIM3) = 0;
+    TIM_SMCR(TIM3) |= (6 << 0); // SMS = 110, trigger mode
+    TIM_SMCR(TIM3) |= (3 << 4); // TS = 011 -> ITR3 = TIM4
 
-    TIM_CCMR1(TIM1) = 0;
-    TIM_CCMR1(TIM1) |= (7 << 4);
-    TIM_CCMR1(TIM1) |= (1 << 3);
+    TIM_CCMR1(TIM3) = 0;
+    TIM_CCMR1(TIM3) |= (7 << 4);
+    TIM_CCMR1(TIM3) |= (1 << 3);
 
-    TIM_CR2(TIM1) &= ~(7 << 4);
-    TIM_CR2(TIM1) |= (4 << 4);
+    TIM_CR2(TIM3) &= ~(7 << 4);
+    TIM_CR2(TIM3) |= (4 << 4); // OC1REF as TRGO -> gate for TIM2
 
-    TIM_CCER(TIM1) = 0;
-    TIM_CCER(TIM1) |= (1 << 0);
+    TIM_CCER(TIM3) = 0;
+    TIM_CCER(TIM3) |= (1 << 0);
 
-    TIM_CR2(TIM1) &= ~(1 << 8); // Idle LOW after pulse
-
-    TIM_CR1(TIM1) |= (1 << 3); // OPM = 1
-    TIM_CR1(TIM1) |= 1;        // CEN = 1
-
-    (*(volatile uint32_t *)(TIM1 + 0x44)) |= (1 << 15); // MOE = 1
+    TIM_CR1(TIM3) |= (1 << 3); // OPM = 1
+    TIM_CR1(TIM3) |= 1;        // CEN = 1
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
@@ -403,104 +443,111 @@ void TIM4_TriggerInit(void)
 {
     RCC_APB1ENR1 |= (1 << 2); // TIM4 clock enable
 
-    TIM_CR1(TIM4) = 0;                 // disable timer
-    TIM_PSC(TIM4) = 79;                // 1 MHz tick (80MHz / 80)
+    TIM_CR1(TIM4) = 0;
+    TIM_PSC(TIM4) = 79;
     TIM_ARR(TIM4) = DELAY_SILENT_ZONE; // 200 us
-    TIM_EGR(TIM4) |= 1;                // UG = latch ARR
-    TIM_SR(TIM4) &= ~1;                // needed as writting egr makes update event to rewrite shadow register and thus interrupts will start firring as soon as initialized
-    TIM_CR1(TIM4) |= (1 << 3);         // OPM = 1 (one pulse mode)
+    TIM_EGR(TIM4) |= 1;
+    TIM_SR(TIM4) &= ~1;
+    TIM_CR1(TIM4) |= (1 << 3); // OPM = 1
 
-    TIM_CR2(TIM4) &= ~(0x7 << 4); // clear MMS
-    TIM_CR2(TIM4) |= (2 << 4);    // MMS = 010 -> update event as TRGO
+    TIM_SMCR(TIM4) = 0;
+    TIM_SMCR(TIM4) |= (6 << 0); // SMS = 110, trigger mode -> auto-starts CEN on trigger
+    TIM_SMCR(TIM4) |= (0 << 4); // TS = 000 -> ITR0 = TIM1
+
+    TIM_CR2(TIM4) &= ~(0x7 << 4);
+    TIM_CR2(TIM4) |= (2 << 4); // MMS = 010, TRGO on update -> feeds TIM3
+}
+
+//   ┌────────────────────────────────────────────────────────────────────────────┐
+//   │ TIM1                                                                       │
+//   │ config      ->  40Khz frequency and 50% duty cycle                         │
+//   │ TX_pulses   -> uses RCR to generate specific amount of pulses              │
+//   └────────────────────────────────────────────────────────────────────────────┘
+void TIM1_PWM_BurstInit()
+{
+    RCC_APB2ENR |= (1 << 11); // TIM1 clock enable
+    RCC_AHB2ENR |= (1 << 0);  // GPIOA clock
+
+    GPIO_MODER(GPIOA) &= ~(3 << (8 * 2));
+    GPIO_MODER(GPIOA) |= (2 << (8 * 2)); // AF mode, PA8
+    GPIO_AFRH(GPIOA) &= ~(0xF << ((8 - 8) * 4));
+    GPIO_AFRH(GPIOA) |= (1 << ((8 - 8) * 4)); // AF1 (TIM1_CH1)
+    GPIO_OTYPER(GPIOA) &= ~(1 << 8);
+    GPIO_OSPEEDR(GPIOA) &= ~(3 << (8 * 2));
+	 GPIO_PUPDR(GPIOA) &= ~(3 << (8 * 2)); 
+
+    TIM_CR1(TIM1) = 0;
+    TIM_PSC(TIM1) = 1;
+    TIM_ARR(TIM1) = 999;
+    TIM_CCR1(TIM1) = 500;
+    TIM_RCR(TIM1) = PULSE_COUNT;
+    TIM_CCMR1(TIM1) &= ~(0xFF);
+    TIM_CCMR1(TIM1) |= (7 << 4);
+    TIM_CCMR1(TIM1) |= (1 << 3);
+    TIM_CCER(TIM1) |= 1;
+    TIM_BDTR(TIM1) |= (1 << 15); // MOE
+    TIM_CR2(TIM1) &= ~(0x7 << 4);
+    TIM_CR2(TIM1) |= (2 << 4); // MMS = 010, TRGO on update event -> fires when RCR hits 0, i.e. burst complete
+    TIM_CR1(TIM1) |= (1 << 3);
+    TIM_DIER(TIM1) |= 1;
+    TIM_EGR(TIM1) |= 1;
+    TIM_SR(TIM1) &= ~1;
+}
+inline static void TX_pulses(uint16_t pulses)
+{
+    /*
+    Earlier egr was used
+    This made ISR work as soon as i write it
+    Thus interrupts fire two times one when EGR is written and other after ARR is hit
+
+    Now this works fine for delay less than 200
+    As TIM1 gets activate before other time interrupt fires
+    Thus the second activate basically dont have any impact on TIM1
+
+    The 8-pulse burst takes exactly 200µs to complete (8 * 25µs). 
+    If DELAY_SILENT_ZONE was >= 200, TIM4 would hit 200µs at the *exact same moment* * the physical burst finished. 
+    The real interrupt would fire, jump into the ISR, and completely reset TIM4 back to zero just as it was about to trigger the ADC. 
+    This caused TIM4 to count all over again, resulting in a massive time shift.
+
+    We now temporarily mask the interrupt before triggering the EGR update.
+    1. Disable TIM16 interrupts (TIM_DIER &= ~1).
+    2. Trigger the EGR update to latch the Repetition Counter (RCR).
+    3. Clear the spurious UIF flag caused by EGR (TIM_SR &= ~1).
+    4. Re-enable interrupts (TIM_DIER |= 1) and start the timer.
+
+    Silly lol !!!!!!!!!!!!!!!!!!!!!!!!!!
+    */
+    TIM_CR1(TIM1) &= ~1;   // stop timer first
+    TIM_DIER(TIM1) &= ~1;  // disable interrupt to prevent phantom ISR jump
+    TIM_RCR(TIM1) = pulses - 1;
+    TIM_CNT(TIM1) = 0;
+    TIM_SR(TIM1) &= ~1;    // may fire isr and thus clear pending UIF
+    TIM_EGR(TIM1) |= 1;    // latch RCR value -> the culprit
+    TIM_SR(TIM1) &= ~1;    // clear the UIF flag caused by EGR safely while interrupts are off
+    TIM_DIER(TIM1) |= 1;   // re-enable interrupt and start
+    TIM_CR1(TIM1) |= 1;  
 }
 
 //   ┌────────────────────────────────────────────────────────────────────────────┐
 //   │ TIM16                                                                      │
-//   │ config      ->  40Khz frequency and 50% duty cycle                         │
-//   │ TX_pulses   -> uses RCR to generate specific amount of pulses              │
-//   └────────────────────────────────────────────────────────────────────────────┘
-void TIM16_PWM_BurstInit()
-{
-    RCC_APB2ENR |= (1 << 17); // TIM16 clock enable
-    RCC_AHB2ENR |= (1 << 0);  // GPIOA clock
-
-    GPIO_MODER(GPIOA) &= ~(3 << (6 * 2));
-    GPIO_MODER(GPIOA) |= (2 << (6 * 2)); // AF mode
-    GPIO_AFRL(GPIOA) &= ~(0xF << (6 * 4));
-    GPIO_AFRL(GPIOA) |= (14 << (6 * 4)); // AF14 (TIM16_CH1)
-
-    TIM_CR1(TIM16) = 0;    // disable timer
-    TIM_PSC(TIM16) = 1;    // 1 MHz tick
-    TIM_ARR(TIM16) = 999;  // period
-    TIM_CCR1(TIM16) = 500; // duty
-    TIM_RCR(TIM16) = 9;    // 10 pulse burst
-    TIM_CCMR1(TIM16) &= ~(0xFF);
-    TIM_CCMR1(TIM16) |= (7 << 4); // PWM mode 2
-    TIM_CCMR1(TIM16) |= (1 << 3); // preload enable
-    TIM_CCER(TIM16) |= 1;         // enable CH1
-    TIM_BDTR(TIM16) |= (1 << 15); // MOE
-    TIM_CR1(TIM16) |= (1 << 3);
-    TIM_DIER(TIM16) |= 1; // UIE
-    TIM_EGR(TIM16) |= 1;  // latch registers
-    TIM_SR(TIM16) &= ~1;  // ? clear the spurious UIF BEFORE enabling NVIC
-    NVIC_EnableIRQ(TIM16_IRQn);
-}
-/*
-Earlier egr was used
-This made ISR work as soon as i write it
-Thus interrupts fire two times one when EGR is written and other after ARR is hit
-
-Now this works fine for delay less than 200
-As TIM1 gets activate before other time interrupt fires
-Thus the second activate basically dont have any impact on TIM1
-
-The 8-pulse burst takes exactly 200µs to complete (8 * 25µs). 
-If DELAY_SILENT_ZONE was >= 200, TIM4 would hit 200µs at the *exact same moment* * the physical burst finished. 
-The real interrupt would fire, jump into the ISR, and completely reset TIM4 back to zero just as it was about to trigger the ADC. 
-This caused TIM4 to count all over again, resulting in a massive time shift.
-
-We now temporarily mask the interrupt before triggering the EGR update.
-1. Disable TIM16 interrupts (TIM_DIER &= ~1).
-2. Trigger the EGR update to latch the Repetition Counter (RCR).
-3. Clear the spurious UIF flag caused by EGR (TIM_SR &= ~1).
-4. Re-enable interrupts (TIM_DIER |= 1) and start the timer.
-
-Silly lol !!!!!!!!!!!!!!!!!!!!!!!!!!
-*/
-inline static void TX_pulses(uint16_t pulses)
-{
-    TIM_CR1(TIM16) &= ~1;  // stop timer first
-    TIM_DIER(TIM16) &= ~1; // 1. Disable interrupt temporarily to prevent the phantom ISR jump
-    TIM_RCR(TIM16) = pulses - 1;
-    TIM_CNT(TIM16) = 0;
-    TIM_SR(TIM16) &= ~1;   // may fire isr and thus clear pending UIF      
-    TIM_EGR(TIM16) |= 1;   //lLatch RCR value-> the culprit
-    TIM_SR(TIM16) &= ~1;   // cear the UIF flag caused by EGR safely while interrupts are off
-    TIM_DIER(TIM16) |= 1;  // renable interrupt and start
-    TIM_CR1(TIM16) |= 1;   
-}
-
-//   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ TIM15                                                                      │
 //   │ config      ->  for normal counting at 1us per tick                        │
 //   │ delay_us    -> uses the config tick for delay in USART2                    │
 //   │ delay_ms    -> uses the same delay_us to generate ms delay                 │
 //   └────────────────────────────────────────────────────────────────────────────┘
-void TIM15_DelayInit()
+void TIM16_DelayInit()
 {
-    RCC_APB2ENR |= (1 << 16); // TIM15 clock enable (APB2ENR, bit 16)
+    RCC_APB2ENR |= (1 << 17); // TIM16 clock enable (APB2ENR, bit 17)
 
-    TIM_CR1(TIM15) = 0;      // disable timer during setup
-    TIM_PSC(TIM15) = 79;     // prescaler: 80MHz / (79+1) = 1MHz ? 1us per tick
-    TIM_ARR(TIM15) = 0xFFFF; // max 16-bit auto-reload
-    TIM_EGR(TIM15) |= 1;     // UG = 1, generate update event
-    TIM_CR1(TIM15) |= 1;     // CEN = 1, start TIM15
+    TIM_CR1(TIM16) = 0;      // disable timer during setup
+    TIM_PSC(TIM16) = 79;     // prescaler: 80MHz / (79+1) = 1MHz -> 1us per tick
+    TIM_ARR(TIM16) = 0xFFFF; // max 16-bit auto-reload
+    TIM_EGR(TIM16) |= 1;     // UG = 1, generate update event
+    TIM_CR1(TIM16) |= 1;     // CEN = 1, start TIM16
 }
 void delay_us(uint16_t us)
 {
-    TIM_CNT(TIM15) = 0;
-    while (TIM_CNT(TIM15) < us)
-        ;
+    TIM_CNT(TIM16) = 0;
+    while (TIM_CNT(TIM16) < us);
 }
 void delay_ms(uint16_t ms)
 {
@@ -531,11 +578,11 @@ void RCC_Init(void)
     while (RCC_CR & (1 << 25));
 
     RCC_PLLCFGR =
-        (3 << 0) |  // PLLSRC = HSE
-        (5 << 4) |  // PLLM   = 5 ? divider of /6 (PLLM+1 on STM32L4)
-        (40 << 8) | // PLLN   = 40
-        (0 << 25) | // PLLR   = 0 ? divider of /2
-        (1 << 24);  // PLLREN = enable PLLR output
+    (3 << 0) |  // PLLSRC = HSE
+    (4 << 4) |  // PLLM = 5 (field value 4, divider = value+1)
+    (32 << 8) | // PLLN = 32 -> 5MHz * 32 = 160MHz VCO
+    (0 << 25) | // PLLR = /2 -> 80MHz SYSCLK
+    (1 << 24);
 
     RCC_CR |= (1 << 24); // PLLON
     while (!(RCC_CR & (1 << 25)))
@@ -553,11 +600,9 @@ void RCC_Init(void)
     while (RCC_CR & (1 << 27));
 
     RCC_PLLSAI1CFGR =
-        (3 << 0) |  // PLLSRC = HSE
-        (5 << 4) |  // PLLM = /6  ? 24/6 = 4 MHz input
-        (40 << 8) | // PLLN = 24  ? 4*40 = 160 MHz VCO
-        (0 << 25) | // PLLR = /2  ? 160/2 = 80 MHz ADC clock
-        (1 << 24);  // PLLREN enable
+    (32 << 8) | // PLLN = 32 -> 5MHz * 32 = 160MHz VCO (matches main PLL VCO)
+    (0 << 25) |
+    (1 << 24);
 
     RCC_CR |= (1 << 26); // PLLSAI1ON
     while (!(RCC_CR & (1 << 27)));
@@ -619,8 +664,6 @@ void GPIO_Init()
     GPIO_Config(LED1_GPIO_Port, LED1_Pin);
     GPIO_Config(LED2_GPIO_Port, LED2_Pin);
     GPIO_Config(LED3_GPIO_Port, LED3_Pin);
-    GPIO_Config(TP1_GPIO_Port, TP1_Pin);
-    GPIO_Config(TP2_GPIO_Port, TP2_Pin);
 }
 static inline void GPIO_Set(uint32_t PORT, uint8_t PIN, uint8_t SET1_RESET0)
 {
@@ -644,21 +687,5 @@ void SomethingsWrong()
         GPIO_Toggle(LED3_GPIO_Port, LED3_Pin);
         delay_ms(30);
         break;
-    }
-}
-
-//   ┌────────────────────────────────────────────────────────────────────────────┐
-//   │ ISR                                                                        │
-//   │ TIM1_16 -> start tim4 to complete the trigger chain (tim16 dont have trg0) │
-//   └────────────────────────────────────────────────────────────────────────────┘ 
-void TIM1_UP_TIM16_IRQHandler()
-{
-    if (TIM_SR(TIM16) & 1)  
-    {
-        TIM_SR(TIM16) &= ~1; // clear TIM16 UIF first
-        TIM_CR1(TIM4) &= ~1; // ensure timer stopped
-        TIM_CNT(TIM4) = 0;   // reset counter
-        TIM_SR(TIM4) &= ~1;  // clear any pending update flag
-        TIM_CR1(TIM4) |= 1;  // start TIM4
     }
 }
